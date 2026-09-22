@@ -1,0 +1,125 @@
+{
+  "bookings": [
+    {
+      "bookedDate": "2026-09-09T20:49:49+02:00",
+      "status": {"isHost": false},
+      "visits": [{"productId": 76, "countPaid": 0, "countMember": 1, "productType": "abo", "productTitle": "Premium membership"}],
+      "numberOfReservedPlaces": 1,
+      "booking": {
+        "type": "lesson", "id": 1003, "description": "Body Pump", "duration": 2700,
+        "startDate": "2026-09-21T11:15:00+0200",
+        "sanctionText": "5-day booking ban after unhonoured bookings",
+        "cancelDateSanction": "2026-09-21T11:15:00+0200",
+        "canRequestExpressReplacement": false,
+        "activity": {"id": 7, "description": "Body Pump", "name": "Body Pump"},
+        "resource": {"id": 1, "name": "Main Studio", "idz": 1, "description": "group fitness studio", "maxPlayerCount": 26, "metadata": {}, "zoneIsVisibleOnline": true},
+        "host": {}
+      },
+      "utmContext": null
+    },
+    {
+      "bookedDate": "2026-09-21T07:04:53+02:00",
+      "status": {"isHost": false},
+      "visits": [{"productId": 76, "countPaid": 0, "countMember": 1, "productType": "abo", "productTitle": "Premium membership"}],
+      "numberOfReservedPlaces": 1,
+      "booking": {
+        "type": "lesson", "id": 1010, "description": "Boxing", "duration": 2700,
+        "startDate": "2026-10-01T16:30:00+0200",
+        "sanctionText": "5-day booking ban after unhonoured bookings",
+        "cancelDateSanction": "2026-10-01T16:30:00+0200",
+        "canRequestExpressReplacement": false,
+        "activity": {"id": 13, "name": "Boxing"},
+        "resource": {"id": 1, "name": "Main Studio", "idz": 1, "description": "group fitness studio", "maxPlayerCount": 26, "metadata": {}, "zoneIsVisibleOnline": true},
+        "host": {}
+      },
+      "utmContext": null
+    },
+    {
+      "bookedDate": "2026-09-13T22:24:11+02:00",
+      "status": {"isHost": false},
+      "visits": [{"productId": 76, "countPaid": 0, "countMember": 1, "productType": "abo", "productTitle": "Premium membership"}],
+      "numberOfReservedPlaces": 1,
+      "booking": {
+        "type": "lesson", "id": 1011, "description": "Spinning", "duration": 2700,
+        "startDate": "2026-09-25T16:30:00+0200",
+        "sanctionText": "5-day booking ban after unhonoured bookings",
+        "cancelDateSanction": "2026-09-25T16:30:00+0200",
+        "canRequestExpressReplacement": false,
+        "activity": {"id": 4, "description": "Spinning", "name": "Spinning"},
+        "resource": {"id": 1, "name": "Main Studio", "idz": 1, "description": "group fitness studio", "maxPlayerCount": 26, "metadata": {}, "zoneIsVisibleOnline": true},
+        "host": {}
+      },
+      "utmContext": null
+    },
+    {
+      "bookedDate": "2026-09-21T07:05:14+02:00",
+      "status": {"isHost": false},
+      "visits": [{"productId": 76, "countPaid": 0, "countMember": 1, "productType": "abo", "productTitle": "Premium membership"}],
+      "numberOfReservedPlaces": 1,
+      "booking": {
+        "type": "lesson", "id": 1012, "description": "Spinning", "duration": 2700,
+        "startDate": "2026-10-02T16:30:00+0200",
+        "sanctionText": "5-day booking ban after unhonoured bookings",
+        "cancelDateSanction": "2026-10-02T16:30:00+0200",
+        "canRequestExpressReplacement": false,
+        "activity": {"id": 4, "description": "Spinning", "name": "Spinning"},
+        "resource": {"id": 1, "name": "Main Studio", "idz": 1, "description": "group fitness studio", "maxPlayerCount": 26, "metadata": {}, "zoneIsVisibleOnline": true},
+        "host": {}
+      },
+      "utmContext": null
+    },
+    {
+      "bookedDate": "2026-09-13T22:28:16+02:00",
+      "status": {"isHost": false},
+      "visits": [{"productId": 76, "countPaid": 0, "countMember": 1, "productType": "abo", "productTitle": "Premium membership"}],
+      "numberOfReservedPlaces": 1,
+      "booking": {
+        "type": "lesson", "id": 1014, "description": "Zumba", "duration": 2700,
+        "startDate": "2026-09-27T09:15:00+0200",
+        "sanctionText": "5-day booking ban after unhonoured bookings",
+        "cancelDateSanction": "2026-09-27T09:15:00+0200",
+        "canRequestExpressReplacement": false,
+        "activity": {"id": 2, "description": "Zumba", "name": "Zumba"},
+        "resource": {"id": 1, "name": "Main Studio", "idz": 1, "description": "group fitness studio", "maxPlayerCount": 26, "metadata": {}, "zoneIsVisibleOnline": true},
+        "host": {}
+      },
+      "utmContext": null
+    },
+    {
+      "bookedDate": "2026-09-14T10:00:00+02:00",
+      "status": {"isHost": false},
+      "visits": [],
+      "numberOfReservedPlaces": 1,
+      "booking": {
+        "type": "lesson", "id": 2001, "description": "Pilates (other site)", "duration": 3600,
+        "startDate": "2026-09-23T18:00:00+0200",
+        "activity": {"id": 20, "name": "Pilates"},
+        "resource": {"id": 40, "name": "Studio B", "idz": 2, "description": "", "maxPlayerCount": 12, "metadata": {}, "zoneIsVisibleOnline": true},
+        "host": {}
+      },
+      "utmContext": null
+    }
+  ],
+  "waitingBookings": [
+    {
+      "booking": {
+        "type": "lesson", "id": 1005, "description": "Bootcamp", "duration": 2700,
+        "startDate": "2026-09-21T16:30:00+0200",
+        "activity": {"id": 5, "description": "Bootcamp", "name": "Bootcamp"},
+        "resource": {"id": 1, "name": "Main Studio", "description": "group fitness studio", "maxPlayerCount": 26, "idz": 1, "zoneIsVisibleOnline": true}
+      },
+      "waitIndex": 13,
+      "utmContext": null
+    },
+    {
+      "booking": {
+        "type": "lesson", "id": 1006, "description": "Bootcamp", "duration": 2700,
+        "startDate": "2026-09-28T16:30:00+0200",
+        "activity": {"id": 5, "description": "Bootcamp", "name": "Bootcamp"},
+        "resource": {"id": 1, "name": "Main Studio", "description": "group fitness studio", "maxPlayerCount": 26, "idz": 1, "zoneIsVisibleOnline": true}
+      },
+      "waitIndex": 2,
+      "utmContext": null
+    }
+  ]
+}

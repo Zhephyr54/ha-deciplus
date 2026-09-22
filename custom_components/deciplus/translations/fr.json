@@ -1,0 +1,119 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Xplor Deciplus",
+        "description": "Connectez-vous avec votre compte adhérent du club (celui utilisé sur member-app.deciplus.pro).",
+        "data": {
+          "domain": "Identifiant du club",
+          "email": "E-mail",
+          "password": "Mot de passe"
+        },
+        "data_description": {
+          "domain": "Le nom qui suit member-app.deciplus.pro/ dans l'adresse de l'espace adhérent, ou collez simplement cette adresse.",
+          "email": "E-mail de votre compte adhérent.",
+          "password": "Mot de passe de votre compte adhérent. Conservé pour renouveler le jeton d'accès à son expiration."
+        }
+      },
+      "zone": {
+        "title": "Choisir le club",
+        "description": "Ce compte a accès à plusieurs sites. Choisissez celui à synchroniser ; ajoutez de nouveau l'intégration pour un autre site.",
+        "data": {
+          "zone_id": "Club / site"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Ré-authentifier Xplor Deciplus",
+        "description": "Le jeton d'accès de {email} sur {domain} a été refusé. Saisissez de nouveau le mot de passe.",
+        "data": {
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_domain": "Identifiant de club inconnu",
+      "invalid_auth": "E-mail ou mot de passe invalide",
+      "cannot_connect": "Échec de la connexion"
+    },
+    "abort": {
+      "already_configured": "Ce club est déjà configuré pour ce compte",
+      "reauth_successful": "La ré-authentification a réussi",
+      "wrong_account": "Ces identifiants correspondent à un autre compte adhérent"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options Xplor Deciplus",
+        "data": {
+          "scan_minutes": "Intervalle de rafraîchissement",
+          "days_ahead": "Horizon des séances"
+        },
+        "data_description": {
+          "scan_minutes": "Minutes entre deux rafraîchissements du planning (2–60). Les ouvertures de réservation sont rafraîchies à l'heure quoi qu'il arrive.",
+          "days_ahead": "Nombre de jours de séances à charger (7–28). Les ouvertures apparaissent 14 jours avant une séance : 21 montre celles de la semaine prochaine."
+        }
+      }
+    }
+  },
+  "entity": {
+    "calendar": {
+      "bookings": { "name": "Réservations" },
+      "waiting_list": { "name": "Liste d'attente" },
+      "available_sessions": { "name": "Séances disponibles" },
+      "full_sessions": { "name": "Séances complètes" },
+      "booking_openings": { "name": "Ouvertures de réservation" }
+    }
+  },
+  "services": {
+    "book_session": {
+      "name": "Réserver une séance",
+      "description": "Réserve une séance ; si elle est complète, rejoint sa liste d'attente sauf si désactivé.",
+      "fields": {
+        "session_id": {
+          "name": "Séance",
+          "description": "Numéro de la séance, tel qu'indiqué dans la description de l'événement (« Séance n°1013 ») ou dans l'uid de n'importe quel événement (« opening-1013 », « session-1013 », « booking-1013 », « waiting-1013 »)."
+        },
+        "waiting_list_fallback": {
+          "name": "Repli sur la liste d'attente",
+          "description": "Rejoindre la liste d'attente si la séance est complète."
+        },
+        "place_id": {
+          "name": "Place",
+          "description": "Identifiant de la place pour les séances avec plan de salle. Vide : la première place libre est prise."
+        },
+        "guests": {
+          "name": "Invités",
+          "description": "Places supplémentaires anonymes réservées avec vous (0–5), si l'activité autorise les invitations."
+        }
+      }
+    },
+    "cancel_booking": {
+      "name": "Annuler une réservation",
+      "description": "Annule une réservation ou quitte la liste d'attente d'une séance.",
+      "fields": {
+        "session_id": {
+          "name": "Séance",
+          "description": "Numéro de la séance, tel qu'indiqué dans la description ou l'uid de l'événement."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "api_error": {
+      "message": "Deciplus a refusé l'action ({code}) : {message}"
+    },
+    "no_free_seat": {
+      "message": "Plus aucune place réservable sur le plan de salle de la séance"
+    },
+    "not_enough_places": {
+      "message": "Pas assez de places libres pour vous et vos invités"
+    },
+    "session_full": {
+      "message": "La séance est complète et le repli sur la liste d'attente est désactivé"
+    },
+    "entry_not_loaded": {
+      "message": "L'appareil ciblé n'est pas un club Xplor Deciplus chargé"
+    }
+  }
+}

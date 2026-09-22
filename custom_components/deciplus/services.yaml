@@ -1,0 +1,48 @@
+book_session:
+  target:
+    device:
+      integration: deciplus
+    entity:
+      integration: deciplus
+      domain: calendar
+  fields:
+    session_id:
+      required: true
+      example: "1013"
+      selector:
+        text:
+    waiting_list_fallback:
+      required: false
+      default: true
+      selector:
+        boolean:
+    place_id:
+      required: false
+      example: "42"
+      selector:
+        number:
+          min: 1
+          max: 10000
+          mode: box
+    guests:
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+
+cancel_booking:
+  target:
+    device:
+      integration: deciplus
+    entity:
+      integration: deciplus
+      domain: calendar
+  fields:
+    session_id:
+      required: true
+      example: "1013"
+      selector:
+        text:

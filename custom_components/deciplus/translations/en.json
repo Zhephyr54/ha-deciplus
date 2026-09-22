@@ -1,0 +1,119 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Xplor Deciplus",
+        "description": "Sign in with your club member account (the one used on member-app.deciplus.pro).",
+        "data": {
+          "domain": "Club identifier",
+          "email": "Email",
+          "password": "Password"
+        },
+        "data_description": {
+          "domain": "The name after member-app.deciplus.pro/ in your club's member area address, or just paste that address.",
+          "email": "Email of your club member account.",
+          "password": "Password of your club member account. Stored to renew the access token when it expires."
+        }
+      },
+      "zone": {
+        "title": "Choose the club",
+        "description": "This account has access to several sites. Pick the one to sync; add the integration again for another site.",
+        "data": {
+          "zone_id": "Club / site"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Xplor Deciplus",
+        "description": "The access token for {email} at {domain} was rejected. Enter the password again.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_domain": "Unknown club identifier",
+      "invalid_auth": "Invalid email or password",
+      "cannot_connect": "Failed to connect"
+    },
+    "abort": {
+      "already_configured": "This club is already configured for this account",
+      "reauth_successful": "Re-authentication was successful",
+      "wrong_account": "These credentials belong to another member account"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Xplor Deciplus options",
+        "data": {
+          "scan_minutes": "Poll interval",
+          "days_ahead": "Sessions horizon"
+        },
+        "data_description": {
+          "scan_minutes": "Minutes between two refreshes of the planning (2–60). Booking openings are refreshed on time regardless.",
+          "days_ahead": "How many days of sessions to load (7–28). Openings appear 14 days before a class, so 21 shows next week's openings."
+        }
+      }
+    }
+  },
+  "entity": {
+    "calendar": {
+      "bookings": { "name": "Bookings" },
+      "waiting_list": { "name": "Waiting list" },
+      "available_sessions": { "name": "Available sessions" },
+      "full_sessions": { "name": "Full sessions" },
+      "booking_openings": { "name": "Booking openings" }
+    }
+  },
+  "services": {
+    "book_session": {
+      "name": "Book a session",
+      "description": "Books a session; when it is full, joins its waiting list unless disabled.",
+      "fields": {
+        "session_id": {
+          "name": "Session",
+          "description": "Session id, as in the event description (\"Séance n°1013\") or any calendar event uid (\"opening-1013\", \"session-1013\", \"booking-1013\", \"waiting-1013\")."
+        },
+        "waiting_list_fallback": {
+          "name": "Waiting list fallback",
+          "description": "Join the waiting list when the session is full."
+        },
+        "place_id": {
+          "name": "Seat",
+          "description": "Seat id for sessions with a seat map. Left empty, the first free seat is taken."
+        },
+        "guests": {
+          "name": "Guests",
+          "description": "Extra anonymous places to book with you (0–5), if the activity allows invitations."
+        }
+      }
+    },
+    "cancel_booking": {
+      "name": "Cancel a booking",
+      "description": "Cancels a booking or leaves the waiting list of a session.",
+      "fields": {
+        "session_id": {
+          "name": "Session",
+          "description": "Session id, as in the event description or uid."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "api_error": {
+      "message": "Deciplus refused the action ({code}): {message}"
+    },
+    "no_free_seat": {
+      "message": "No bookable seat is left on the session's seat map"
+    },
+    "not_enough_places": {
+      "message": "Not enough free places left for you and your guests"
+    },
+    "session_full": {
+      "message": "The session is full and the waiting list fallback is disabled"
+    },
+    "entry_not_loaded": {
+      "message": "The targeted device is not a loaded Xplor Deciplus club"
+    }
+  }
+}

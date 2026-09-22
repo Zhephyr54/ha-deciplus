@@ -1,0 +1,113 @@
+blueprint:
+  name: "Xplor Deciplus: auto-book a recurring class"
+  description: >-
+    Books a class the moment its booking window opens (14 days before it starts).
+    Pick your club's "Booking openings" calendar, name the activity and the day(s) and
+    time you want. Errors and results are visible in the automation trace; pair with the
+    `deciplus_booking_confirmed` / `deciplus_booking_cancelled` events for notifications.
+  domain: automation
+  author: Zhephyr54
+  source_url: https://github.com/Zhephyr54/ha-deciplus/blob/main/blueprints/automation/deciplus/auto_book.yaml
+  homeassistant:
+    min_version: 2025.2.0
+  input:
+    openings_calendar:
+      name: Booking openings calendar
+      description: >-
+        The "Booking openings" calendar of your club (one per Deciplus device). Any other
+        Deciplus calendar is accepted by the picker but never books anything.
+      selector:
+        entity:
+          filter:
+            - integration: deciplus
+              domain: calendar
+    activity:
+      name: Activity
+      description: Matched case-insensitively against the class title, e.g. "Yoga".
+      selector:
+        text:
+    weekdays:
+      name: Days
+      description: Only book classes starting on these days.
+      default: ["1", "2", "3", "4", "5", "6", "7"]
+      selector:
+        select:
+          multiple: true
+          mode: list
+          options:
+            - label: Monday
+              value: "1"
+            - label: Tuesday
+              value: "2"
+            - label: Wednesday
+              value: "3"
+            - label: Thursday
+              value: "4"
+            - label: Friday
+              value: "5"
+            - label: Saturday
+              value: "6"
+            - label: Sunday
+              value: "7"
+    time:
+      name: Class start time
+      description: "HH:MM, as shown in the club planning. Leave empty for any time."
+      default: ""
+      selector:
+        text:
+    waiting_list_fallback:
+      name: Join the waiting list when full
+      default: true
+      selector:
+        boolean:
+    guests:
+      name: Guests
+      description: Extra anonymous places to book with you (if the activity allows invitations).
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
+
+mode: queued
+max_exceeded: silent
+
+triggers:
+  - trigger: calendar
+    entity_id: !input openings_calendar
+    event: start
+
+variables:
+  openings_calendar: !input openings_calendar
+  activity: !input activity
+  weekdays: !input weekdays
+  wanted_time: !input time
+  # the session start is in the event description ("Séance le 26/09/2026 14:00"); the
+  # opening instant itself is 14 days earlier and can shift by an hour across DST.
+  # Empty when the picked calendar is not "Booking openings": the run then stops quietly
+  session_start_text: >-
+    {% set found = (trigger.calendar_event.description | default(''))
+       | regex_findall('Séance le (\d\d/\d\d/\d{4} \d\d:\d\d)') %}
+    {{ found[0] if found else '' }}
+  session_weekday: >-
+    {{ strptime(session_start_text, '%d/%m/%Y %H:%M').isoweekday() if session_start_text else 0 }}
+  session_time: >-
+    {{ strptime(session_start_text, '%d/%m/%Y %H:%M').strftime('%H:%M') if session_start_text else '' }}
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ session_start_text != ''
+         and (activity | lower) in (trigger.calendar_event.summary | lower)
+         and (session_weekday | string) in weekdays
+         and (wanted_time | trim == '' or session_time == wanted_time | trim) }}
+
+actions:
+  - action: deciplus.book_session
+    target:
+      device_id: "{{ device_id(openings_calendar) }}"
+    data:
+      session_id: "{{ trigger.calendar_event.uid }}"
+      waiting_list_fallback: !input waiting_list_fallback
+      guests: !input guests
