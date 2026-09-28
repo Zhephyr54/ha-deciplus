@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 from .api import DeciplusApiError, DeciplusAuthError, DeciplusError
 from .const import DOMAIN
 from .coordinator import _parse
+from .quotas import codes
 
 ATTR_DEVICE = "device_id"
 ATTR_SESSION = "session_id"
@@ -134,7 +135,11 @@ async def _book(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     auto_seat = place is None
     result: dict[str, Any]
     try:
-        session = await client.async_get_session(session_id)
+        session, messages = await client.async_get_session(session_id)
+        # the pre-check is a free observation for the learned limits; the server stays the
+        # authority on the booking itself (a queue entry may be allowed where a booking is not)
+        if coordinator.observe(session, codes(messages), coordinator.data.held if coordinator.data else []):
+            coordinator.async_update_listeners()
         free = session["maxBookings"] - session["bookedMembers"]
         if guests and free <= guests:  # not enough room for member + guests: never queue alone
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="not_enough_places")
@@ -159,7 +164,7 @@ async def _book(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
                     continue
                 if err.code == "PLACE_NOT_AVAILABLE" and auto_seat and seat_left > 0:
                     seat_left -= 1  # someone took our seat: pick another, don't queue
-                    place = free_seat(await client.async_get_session(session_id))
+                    place = free_seat((await client.async_get_session(session_id))[0])
                     if place is None:
                         raise _no_free_seat() from err
                     continue

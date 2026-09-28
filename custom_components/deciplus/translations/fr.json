@@ -63,6 +63,12 @@
       "available_sessions": { "name": "Séances disponibles" },
       "full_sessions": { "name": "Séances complètes" },
       "booking_openings": { "name": "Ouvertures de réservation" }
+    },
+    "sensor": {
+      "held_bookings": { "name": "Réservations en cours" }
+    },
+    "binary_sensor": {
+      "booking_blocked": { "name": "Réservation bloquée" }
     }
   },
   "services": {

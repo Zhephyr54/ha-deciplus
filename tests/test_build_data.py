@@ -37,6 +37,13 @@ def test_build_data():
     assert data.bookings[0].location == "Main Studio"
     assert data.bookings[0].end - data.bookings[0].start == timedelta(minutes=45)
     assert "Séance n°1003" in data.bookings[0].description
+    # the instant is rendered in HA's local zone (UTC in the test container)
+    assert "\nPénalité si annulation après le " in data.bookings[0].description
+    assert data.bookings[0].description.endswith(": 5-day booking ban after unhonoured bookings")
+
+    # what the quota rules count: every booking of the account, other zones included
+    assert len(data.held) == 6 and data.waiting == 2
+    assert {h.activity_name for h in data.held} == {"Body Pump", "Boxing", "Spinning", "Zumba", "Pilates"}
 
     assert [e.uid for e in data.waiting_list] == ["waiting-1005", "waiting-1006"]
     assert data.waiting_list[0].summary == "Bootcamp (en attente – 13)"
@@ -73,8 +80,9 @@ def test_build_data():
     naive["booking"] = {**naive["booking"], "startDate": "2026-09-21T11:15:00"}
     assert build_data({"bookings": [naive]}, [], [], 1, NOW).bookings[0].start.tzinfo is not None
 
-    # a null item in any list is skipped, not fatal
+    # a null item in any list is skipped, not fatal; a malformed booking still counts as held
     assert build_data({"bookings": [None]}, [None], [None], 1, NOW).lists() == DeciplusData().lists()
+    assert build_data({"bookings": [None, {"booking": None}]}, [], [], 1, NOW).held == [(None, None, None)]
     # a list that is not a list means the whole payload is suspect
     for bad in ({"bookings": {"1003": {}}}, {"waitingBookings": "x"}):
         try:

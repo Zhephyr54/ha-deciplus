@@ -177,6 +177,20 @@ def test_cancel_requires_confirmation_when_messages_present():
             assert ok, body
 
 
+def test_session_detail_returns_precheck_messages():
+    session = StubSession(
+        {
+            ("GET", "/members/v1/sessions/5"): [Resp(200, {"booking": {"id": 5}})],
+            ("GET", "/members/v1/sessions/6"): [
+                Resp(200, {"booking": {"id": 6}, "messages": ["This member has reached his quota", 3]})
+            ],
+        }
+    )
+    client = DeciplusClient(session, "myclub", "e", "p", token="t")
+    assert run(client.async_get_session(5)) == ({"id": 5}, [])
+    assert run(client.async_get_session(6)) == ({"id": 6}, ["This member has reached his quota"])
+
+
 def test_book_body_with_seat_and_guests():
     ok = Resp(200, {"booking": {"bookingState": "init"}})
     session = StubSession({("POST", "/members/v1/booking/5/addMember"): [ok]})

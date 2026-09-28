@@ -63,6 +63,12 @@
       "available_sessions": { "name": "Available sessions" },
       "full_sessions": { "name": "Full sessions" },
       "booking_openings": { "name": "Booking openings" }
+    },
+    "sensor": {
+      "held_bookings": { "name": "Bookings held" }
+    },
+    "binary_sensor": {
+      "booking_blocked": { "name": "Booking blocked" }
     }
   },
   "services": {

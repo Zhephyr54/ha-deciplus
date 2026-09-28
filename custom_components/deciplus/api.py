@@ -11,16 +11,49 @@ import aiohttp
 
 from .const import API_BASE, GLOBAL, HEADERS, MEMBERS, PUBLIC
 
-# API `message` → rule code, for responses without `data.rules` (frontend constants.js).
-# The codes the integration branches on, plus the booking refusals a user is likely to see.
+# API `message` → rule code (frontend constants.js → API_ERROR_MESSAGES, complete). Used for
+# error responses without `data.rules` and for the pre-check sentences of GET sessions/{id}.
 MESSAGE_CODES = {
-    "This booking is complete": "BOOKING_COMPLETE",
-    "This place is not available": "PLACE_NOT_AVAILABLE",
-    "This booking is not available yet": "BOOKING_NOT_AVAILABLE_AFTER",
+    "This booking has been cancelled, This booking does not exist": "BOOKING_HAS_BEEN_CANCELLED_NOT_FOUND",
     "This booking is no longer available": "BOOKING_NOT_AVAILABLE_BEFORE",
+    "This booking is not available yet": "BOOKING_NOT_AVAILABLE_AFTER",
+    "This booking is not complete": "BOOKING_NOT_COMPLETE",
+    "This booking is complete": "BOOKING_COMPLETE",
+    "This booking does not exist": "BOOKING_NOT_FOUND",
+    "This member already has a booking on this time slot": "BOOKING_ON_SAME_TIME_SLOT",
+    "This booking does not meet the maximum deadline": "BOOKING_WRONG_MAX_DURATION",
+    "This booking does not meet the minimum deadline": "BOOKING_WRONG_MIN_DURATION",
+    "This booking has been cancelled": "BOOKING_HAS_BEEN_CANCELLED",
+    "This booking's zone is blacklisted and cannot be used by other zone's members": "BOOKING_ZONE_BLACKLISTED",
+    "This member doesn't have valid product": "MEMBER_DONT_HAVE_VALID_PRODUCT",
+    "This member has no registration on this booking": "MEMBER_HAS_NOT_REGISTERED",
     "This member is already registered to this booking": "MEMBER_HAS_REGISTERED",
     "This member is already registered to the waiting list of this booking": "MEMBER_HAS_REGISTERED_ON_WAITING_LIST",
+    "This member has not enough credit": "MEMBER_HAS_NOT_ENOUGH_CREDIT",
+    "This member has too many bookings for this day": "MEMBER_HAS_TOO_MANY_BOOKING_FOR_THE_DAY",
+    "This member has too many canceled booking or absence": "MEMBER_HAVE_TOO_MANY_CANCEL",
+    "This member has unpaid": "MEMBER_HAVE_UNPAID",
+    "This member is black listed": "MEMBER_IN_BLACKLIST",
+    "This member has reached max booking per period": "MEMBER_MAX_BOOKING_PER_PERIOD_REACHED",
+    "This member has reached time limit between two booking": "MEMBER_BOOKING_TOO_EARLY",
+    "This member has reached his quota": "MEMBER_MAX_BOOKING_QUOTA_REACHED",
+    "This member has reached his quota for this activity": "MEMBER_MAX_ACTIVITY_BOOKING_QUOTA_REACHED",
+    "This member does not exist": "MEMBER_NOT_FOUND",
+    "This member is anonyme": "MEMBER_IS_ANONYME",
+    "The online cancellation delay is exceeded for this booking": "MEMBER_ONLINE_CANCELATION_DELAY_EXCEEDED",
+    "This member has reached his quota of authorized absences or cancellations": "MEMBER_CANCEL_QUOTA_REACHED",
+    "This member's zone is blacklisted and he cannot book to other zone's bookings": "MEMBER_ZONE_BLACKLISTED",
+    "This place is not available": "PLACE_NOT_AVAILABLE",
+    "This product is not available for this activity": "PRODUCT_NOT_AVAILABLE_FOR_THIS_SPORT",
+    "This product is not available for this zone": "PRODUCT_NOT_AVAILABLE_FOR_THIS_ZONE",
+    "This rule does not exist": "RULE_NOT_FOUND",
+    "This schedule is not available": "SCHEDULE_NOT_FOUND",
+    "This resource does not exist": "RESOURCE_NOT_FOUND",
+    "This resource is not available for this activity": "RESOURCE_NOT_AVAILABLE_FOR_ACTIVITY",
+    "This resource is not available at this date for this duration": "RESOURCE_NOT_AVAILABLE_FOR_DATE_AND_DURATION",
+    "an error occurred": "GENERAL_ERROR",
     "Members cannot add member to booking queue": "CANNOT_ADD_TO_BOOKING_QUEUE",
+    "You can't reserve many places for this activity": "INVITATIONS_NOT_AVAILABLE",
 }
 
 
@@ -200,9 +233,12 @@ class DeciplusClient:
     async def async_get_resources(self, zone_id: int) -> list[dict[str, Any]]:
         return await self._request("GET", f"{MEMBERS}/resources", params={"zoneId": zone_id})
 
-    async def async_get_session(self, session_id: int) -> dict[str, Any]:
+    async def async_get_session(self, session_id: int) -> tuple[dict[str, Any], list[str]]:
+        """Session detail plus `messages`: the booking rules that would refuse this member
+        right now, as API sentences (see MESSAGE_CODES). Empty when bookable."""
         data = await self._request("GET", f"{MEMBERS}/sessions/{session_id}")
-        return (data or {})["booking"]
+        data = data or {}
+        return data["booking"], [m for m in data.get("messages") or [] if isinstance(m, str)]
 
     async def async_book(
         self, session_id: int, *, place_id: int | None = None, guests: int = 0

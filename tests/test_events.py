@@ -13,7 +13,12 @@ from custom_components.deciplus.const import (  # noqa: E402
     EVENT_SESSION_AVAILABLE,
     EVENT_WAITING_POSITION_CHANGED,
 )
-from custom_components.deciplus.coordinator import build_data, diff_events, next_opening  # noqa: E402
+from custom_components.deciplus.coordinator import (  # noqa: E402
+    build_data,
+    diff_events,
+    next_opening,
+    probe_session,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 PARIS = timezone(timedelta(hours=2))
@@ -89,7 +94,19 @@ def test_next_opening():
     assert next_opening(data, datetime(2026, 9, 13, 12, 0, tzinfo=PARIS)) is None
 
 
+def test_probe_session():
+    data = _data(_load("upcoming.json"), _load("sessions.json"))
+    assert probe_session(data) == 1004  # earliest available session, never a registered one
+    data.available_sessions.clear()
+    assert probe_session(data) == 1001  # then the earliest full one, then an opening
+    data.full_sessions.clear()
+    assert probe_session(data) == 1013
+    data.booking_openings.clear()
+    assert probe_session(data) is None
+
+
 if __name__ == "__main__":
     test_events()
     test_next_opening()
+    test_probe_session()
     print("events OK")

@@ -13,10 +13,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.event import async_track_point_in_time
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import DeciplusAuthError, DeciplusClient, DeciplusError
+from .api import DeciplusApiError, DeciplusAuthError, DeciplusClient, DeciplusError
 from .const import (
     CONF_DAYS_AHEAD,
     CONF_SCAN_MINUTES,
@@ -31,8 +32,16 @@ from .const import (
     OPENING_DURATION,
     OPENING_REFRESH_DELAY,
 )
+from .quotas import Held, blockers, codes, learn
 
 _LOGGER = logging.getLogger(__name__)
+
+STORAGE_VERSION = 1
+SAVE_DELAY = 10  # seconds
+
+
+def storage_key(entry_id: str) -> str:
+    return f"{DOMAIN}.{entry_id}"
 
 
 @dataclass
@@ -46,6 +55,12 @@ class DeciplusData:
     booking_openings: list[CalendarEvent] = field(default_factory=list)
     wait_positions: dict[int, int] = field(default_factory=dict)  # session id → waitIndex
     unparsed: set[int] = field(default_factory=set)  # ids of skipped (malformed) items
+    held: list[Held] = field(default_factory=list)  # every booking of the account, all zones
+    waiting: int = 0  # waiting-list registrations, all zones
+    # filled by the coordinator's probe (see DeciplusCoordinator._probe): the member-wide
+    # refusals the server would apply right now, None when not probed / not evaluated
+    blockers: list[str] | None = None
+    probe: dict[str, Any] | None = None  # {session_id, summary, start} of the probed session
 
     def lists(self) -> tuple[list[CalendarEvent], ...]:
         return (
@@ -92,17 +107,34 @@ def _booking(item: dict[str, Any], zone_id: int, **_: Any) -> Converted:
     lesson = item["booking"]
     if lesson["resource"]["idz"] != zone_id:
         return None  # /bookings/upcoming spans all zones of the account
+    description = (
+        f"Séance n°{lesson['id']}\n"
+        f"Réservé le {_fr(_parse(item['bookedDate']))}\n"
+        f"Places : {item.get('numberOfReservedPlaces', 1)}"
+    )
+    # club penalty for cancelling after that instant (often the class start = no-show)
+    if lesson.get("sanctionText") and lesson.get("cancelDateSanction"):
+        description += (
+            f"\nPénalité si annulation après le {_fr(_parse(lesson['cancelDateSanction']))} : "
+            f"{lesson['sanctionText'].strip()}"
+        )
     ev = _lesson_event(
         lesson,
         uid=f"booking-{lesson['id']}",
         location=lesson["resource"].get("name"),
-        description=(
-            f"Séance n°{lesson['id']}\n"
-            f"Réservé le {_fr(_parse(item['bookedDate']))}\n"
-            f"Places : {item.get('numberOfReservedPlaces', 1)}"
-        ),
+        description=description,
     )
     return "bookings", ev
+
+
+def _held(item: dict[str, Any]) -> Held:
+    """What the quota rules count; a malformed item still counts as one booking."""
+    try:
+        lesson = item["booking"]
+        activity = lesson.get("activity") or {}
+        return Held(_parse(lesson["startDate"]), activity.get("id"), activity.get("name"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return Held(None, None, None)
 
 
 def _waiting(item: dict[str, Any], zone_id: int, positions: dict[int, int], **_: Any) -> Converted:
@@ -177,6 +209,8 @@ def build_data(
     waiting = upcoming.get("waitingBookings") or []
     if not all(isinstance(x, list) for x in (bookings, waiting, sessions or [])):
         raise ValueError("Unexpected Deciplus payload shape")
+    data.held = [_held(i) for i in bookings if i is not None]
+    data.waiting = sum(1 for i in waiting if i is not None)
     ctx = {
         "zone_id": zone_id,
         "now": now,
@@ -275,6 +309,15 @@ def next_opening(data: DeciplusData, now: datetime) -> datetime | None:
     return min((e.start for e in data.booking_openings if e.start > now), default=None)
 
 
+def probe_session(data: DeciplusData) -> int | None:
+    """Session whose pre-check tells the member's state: the earliest one the member is not
+    registered on (a booked session or a closed window short-circuits the evaluation)."""
+    for events in (data.available_sessions, data.full_sessions, data.booking_openings):
+        if events:
+            return _sid(events[0])
+    return None
+
+
 class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
     """Polls the members API; fires lifecycle events; refreshes right after an opening."""
 
@@ -291,8 +334,47 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
         self.zone_id: int = entry.data[CONF_ZONE_ID]
         self.days_ahead: int = entry.options.get(CONF_DAYS_AHEAD, DEFAULT_DAYS_AHEAD)
         self.ignore_cancel: set[int] = set()  # cancellations made through our own service
+        # learned booking limits (quotas.learn), kept across restarts
+        self.quotas: dict[str, Any] = {}
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, storage_key(entry.entry_id))
         self._opening_unsub: CALLBACK_TYPE | None = None
         entry.async_on_unload(self._cancel_opening_refresh)
+
+    async def _async_setup(self) -> None:
+        self.quotas = await self._store.async_load() or {}
+
+    def observe(self, session: dict[str, Any], found: list[str], held: list[Held]) -> bool:
+        """Feed one pre-check (probe or book_session) to the learned limits; True if changed."""
+        try:
+            start = _parse(session["startDate"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        if not learn(self.quotas, held, start, session.get("activityId"), found):
+            return False
+        self._store.async_delay_save(lambda: self.quotas, SAVE_DELAY)
+        return True
+
+    async def _probe(self, data: DeciplusData) -> None:
+        """One GET on a session the member is not registered on: its `messages` are the
+        rules that would refuse the member now (member-wide ones → `data.blockers`)."""
+        if (sid := probe_session(data)) is None:
+            return
+        try:
+            session, messages = await self.client.async_get_session(sid)
+        except DeciplusApiError as err:  # e.g. gone since /sessions: unknown until next poll
+            _LOGGER.debug("Probe of session %s failed: %s", sid, err)
+            return
+        found = codes(messages)
+        data.blockers = blockers(found)
+        try:
+            data.probe = {
+                "session_id": sid,
+                "summary": session.get("description"),
+                "start": _parse(session["startDate"]).isoformat(),
+            }
+        except (KeyError, TypeError, ValueError):
+            data.probe = {"session_id": sid}
+        self.observe(session, found, data.held)
 
     @callback
     def _cancel_opening_refresh(self) -> None:
@@ -327,6 +409,12 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
         try:
             data = build_data(upcoming, sessions, resources, self.zone_id, now)
         except ValueError as err:
+            raise UpdateFailed(str(err)) from err
+        try:
+            await self._probe(data)
+        except DeciplusAuthError as err:
+            raise ConfigEntryAuthFailed from err
+        except DeciplusError as err:
             raise UpdateFailed(str(err)) from err
 
         for event, payload in diff_events(self.data, data, self.zone_id, now, self.ignore_cancel):

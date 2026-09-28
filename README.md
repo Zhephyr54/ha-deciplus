@@ -20,6 +20,34 @@ One device per club (named after it) with five calendars:
 
 Event titles carry the occupancy (`Yoga 22/26`); descriptions carry the session id
 (`Séance n°1013`), and uids are `booking-1013` / `waiting-1013` / `session-1013` / `opening-1013`.
+A booking's description also states the club's cancellation penalty and the instant it
+starts applying (`Pénalité si annulation après le …`).
+
+Plus two entities about your booking limits:
+
+| Entity                            | Content                                                                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sensor.<club>_bookings_held`     | bookings you hold (all sites of the account); attributes `waiting_list`, and the learned limits `quota`, `quota_per_day`, `quota_per_activity` |
+| `binary_sensor.<club>_booking_blocked` | on when Deciplus would refuse you a booking right now for a reason about *you* (quota reached, unpaid, blacklisted, no valid product…); attribute `reasons` lists the Deciplus codes |
+
+### How limits work
+
+Deciplus never states the numbers; it only answers "reached" when asked. Every poll the
+integration asks once, on the earliest session you are not registered on (the *probe*, shown
+in the binary sensor attributes), which costs one request and changes nothing on your
+account. The state is therefore always current. The maxima are **learned**: the first time
+a limit is reached while Home Assistant is polling, the max is what you held at that moment
+(the server never lets you exceed it online). Until then the attribute is `null`; if the
+club later changes the limit, the value resets and is learned again. Learned values survive
+restarts.
+
+- `quota` — simultaneous bookings held. Exact.
+- `quota_per_day` — bookings on one day; learned when the probe lands on a saturated day.
+- `quota_per_activity` — `{"Spinning": 2}`; learned per activity, when the probe is one.
+- A "per period" limit shows up in `reasons` (`MEMBER_MAX_BOOKING_PER_PERIOD_REACHED`) but has
+  no learned max: the API gives no hint of what the period is.
+
+Rules about the probed session itself (full, not open yet) never turn the binary sensor on.
 
 ## Install (HACS)
 
@@ -283,7 +311,25 @@ actions:
               waiting_list_fallback: false
 ```
 
-### 9. Session id from an entity, without a trigger
+### 9. Book only when it will not be refused
+
+```yaml
+conditions:
+  - condition: state
+    entity_id: binary_sensor.my_club_booking_blocked
+    state: "off"
+  # or, once the quota has been learned, keep one slot free for spontaneous classes:
+  - condition: template
+    value_template: >-
+      {{ state_attr('sensor.my_club_bookings_held', 'quota') is none
+         or states('sensor.my_club_bookings_held') | int < state_attr('sensor.my_club_bookings_held', 'quota') - 1 }}
+```
+
+Or the other way round: when `binary_sensor.my_club_booking_blocked` turns on with
+`MEMBER_MAX_BOOKING_QUOTA_REACHED` in `reasons`, notify yourself to cancel a class you will
+skip; cancelling frees the slot immediately.
+
+### 10. Session id from an entity, without a trigger
 
 Outside a trigger (e.g. a dashboard button cancelling the next class) there is no uid; read
 it from the next event's description:
@@ -303,6 +349,7 @@ data:
 - Events are computed by comparing two polls: nothing fires for what happened while Home
   Assistant was off, and a promotion and a club cancellation of the same class between two
   polls would go unnoticed.
+- The size of a waiting list is not exposed by the API (only your own position).
 
 ## Obtenir ses identifiants (FR)
 
@@ -318,5 +365,5 @@ API notes: [docs/deciplus-api.md](docs/deciplus-api.md).
 ```sh
 docker run --rm -v "$PWD":/w -w /w ghcr.io/home-assistant/home-assistant:stable sh -c "
   python tests/test_build_data.py && python tests/test_events.py && python tests/test_api.py &&
-  python tests/test_services_helpers.py && python tests/check_translations.py"
+  python tests/test_quotas.py && python tests/test_services_helpers.py && python tests/check_translations.py"
 ```
