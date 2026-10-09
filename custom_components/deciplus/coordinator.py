@@ -6,18 +6,19 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 from homeassistant.components.calendar import CalendarEvent
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.event import async_track_point_in_time
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .api import DeciplusApiError, DeciplusAuthError, DeciplusClient, DeciplusError
+from .booking import book, parse
 from .const import (
     CONF_DAYS_AHEAD,
     CONF_SCAN_MINUTES,
@@ -27,10 +28,22 @@ from .const import (
     DOMAIN,
     EVENT_BOOKING_CANCELLED,
     EVENT_BOOKING_CONFIRMED,
+    EVENT_PREBOOKING_RESULT,
     EVENT_SESSION_AVAILABLE,
     EVENT_WAITING_POSITION_CHANGED,
     OPENING_DURATION,
     OPENING_REFRESH_DELAY,
+)
+from .prebooking import (
+    Prebooking,
+    dump,
+    event,
+    load,
+    next_opens,
+    projected,
+    retryable,
+    split,
+    still_blocked,
 )
 from .quotas import Held, blockers, codes, learn
 
@@ -44,6 +57,30 @@ def storage_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}"
 
 
+class Session(NamedTuple):
+    """One session of the planning as a structured row (picker, companion card feed).
+
+    `state`: available / full / opening (the member could act), booked / waiting (held),
+    closed (window over, shown greyed only). The pre-booking queue is applied on top of these
+    by websocket.planning, never here."""
+
+    id: int
+    start: datetime
+    end: datetime
+    summary: str
+    location: str | None
+    opens: datetime
+    state: str
+    closes: datetime | None = None
+    booked: int | None = None  # head-count of the session
+    max: int | None = None
+    activity_id: int | None = None
+    wait_index: int | None = None  # state waiting
+    places: int | None = None  # state booked: places reserved (member + guests)
+    penalty_after: datetime | None = None  # state booked: cancelDateSanction
+    penalty_text: str | None = None
+
+
 @dataclass
 class DeciplusData:
     """Events per calendar, each sorted by start, plus the member's queue positions."""
@@ -53,10 +90,13 @@ class DeciplusData:
     available_sessions: list[CalendarEvent] = field(default_factory=list)
     full_sessions: list[CalendarEvent] = field(default_factory=list)
     booking_openings: list[CalendarEvent] = field(default_factory=list)
+    prebookings: list[CalendarEvent] = field(default_factory=list)  # from the coordinator queue
+    sessions: list[Session] = field(default_factory=list)  # the three session calendars, as rows
     wait_positions: dict[int, int] = field(default_factory=dict)  # session id → waitIndex
     unparsed: set[int] = field(default_factory=set)  # ids of skipped (malformed) items
-    held: list[Held] = field(default_factory=list)  # every booking of the account, all zones
-    waiting: int = 0  # waiting-list registrations, all zones
+    # what the quota counts: every booking and waiting-list entry of the account, all zones
+    held: list[Held] = field(default_factory=list)
+    waiting: int = 0  # how many of `held` are waiting-list entries
     # filled by the coordinator's probe (see DeciplusCoordinator._probe): the member-wide
     # refusals the server would apply right now, None when not probed / not evaluated
     blockers: list[str] | None = None
@@ -72,15 +112,6 @@ class DeciplusData:
         )
 
 
-def _parse(value: str) -> datetime:
-    parsed = dt_util.parse_datetime(value)
-    if parsed is None:
-        raise ValueError(f"Bad date: {value}")
-    if parsed.tzinfo is None:  # API always sends an offset; never let a naive one through
-        parsed = parsed.replace(tzinfo=dt_util.get_default_time_zone())
-    return parsed
-
-
 def _fr(dt: datetime) -> str:
     return dt_util.as_local(dt).strftime("%d/%m/%Y %H:%M")
 
@@ -91,7 +122,7 @@ def _sid(ev: CalendarEvent) -> int:
 
 
 def _lesson_event(lesson: dict[str, Any], **kwargs: Any) -> CalendarEvent:
-    start = _parse(lesson["startDate"])
+    start = parse(lesson["startDate"])
     return CalendarEvent(
         start=start,
         end=start + timedelta(seconds=lesson["duration"]),
@@ -103,26 +134,33 @@ def _lesson_event(lesson: dict[str, Any], **kwargs: Any) -> CalendarEvent:
 Converted = tuple[str, CalendarEvent] | None  # (DeciplusData field, event)
 
 
-def _booking(item: dict[str, Any], zone_id: int, **_: Any) -> Converted:
+def _booking(item: dict[str, Any], zone_id: int, sessions: list[Session], **_: Any) -> Converted:
     lesson = item["booking"]
     if lesson["resource"]["idz"] != zone_id:
         return None  # /bookings/upcoming spans all zones of the account
+    places = item.get("numberOfReservedPlaces", 1)
     description = (
         f"Séance n°{lesson['id']}\n"
-        f"Réservé le {_fr(_parse(item['bookedDate']))}\n"
-        f"Places : {item.get('numberOfReservedPlaces', 1)}"
+        f"Réservé le {_fr(parse(item['bookedDate']))}\n"
+        f"Places : {places}"
     )
     # club penalty for cancelling after that instant (often the class start = no-show)
+    penalty_after = penalty_text = None
     if lesson.get("sanctionText") and lesson.get("cancelDateSanction"):
-        description += (
-            f"\nPénalité si annulation après le {_fr(_parse(lesson['cancelDateSanction']))} : "
-            f"{lesson['sanctionText'].strip()}"
-        )
+        penalty_after, penalty_text = parse(lesson["cancelDateSanction"]), lesson["sanctionText"].strip()
+        description += f"\nPénalité si annulation après le {_fr(penalty_after)} : {penalty_text}"
     ev = _lesson_event(
         lesson,
         uid=f"booking-{lesson['id']}",
         location=lesson["resource"].get("name"),
         description=description,
+    )
+    sessions.append(
+        Session(
+            lesson["id"], ev.start, ev.end, ev.summary, ev.location, ev.start, "booked",
+            activity_id=(lesson.get("activity") or {}).get("id"), places=places,
+            penalty_after=penalty_after, penalty_text=penalty_text,
+        )
     )
     return "bookings", ev
 
@@ -132,12 +170,14 @@ def _held(item: dict[str, Any]) -> Held:
     try:
         lesson = item["booking"]
         activity = lesson.get("activity") or {}
-        return Held(_parse(lesson["startDate"]), activity.get("id"), activity.get("name"))
+        return Held(parse(lesson["startDate"]), activity.get("id"), activity.get("name"))
     except (KeyError, TypeError, ValueError, AttributeError):
         return Held(None, None, None)
 
 
-def _waiting(item: dict[str, Any], zone_id: int, positions: dict[int, int], **_: Any) -> Converted:
+def _waiting(
+    item: dict[str, Any], zone_id: int, positions: dict[int, int], sessions: list[Session], **_: Any
+) -> Converted:
     lesson = item["booking"]
     if lesson["resource"]["idz"] != zone_id:
         return None
@@ -147,23 +187,37 @@ def _waiting(item: dict[str, Any], zone_id: int, positions: dict[int, int], **_:
         location=lesson["resource"].get("name"),
         description=f"Séance n°{lesson['id']}\nEn attente – {item['waitIndex']}",
     )
+    sessions.append(
+        Session(
+            lesson["id"], ev.start, ev.end, ev.summary, ev.location, ev.start, "waiting",
+            activity_id=(lesson.get("activity") or {}).get("id"), wait_index=item["waitIndex"],
+        )
+    )
     ev.summary = f"{ev.summary} (en attente – {item['waitIndex']})"
     positions[lesson["id"]] = item["waitIndex"]
     return "waiting_list", ev
 
 
-def _session(s: dict[str, Any], now: datetime, names: dict[int, str], **_: Any) -> Converted:
+def _session(
+    s: dict[str, Any], now: datetime, names: dict[int, str], sessions: list[Session], **_: Any
+) -> Converted:
     status = (s.get("status") or {}).get("status")
     if status not in ("available", "waiting-list"):
         return None  # registered / registered-waiting-list: already in bookings / waiting_list
-    # full vs available by head-count, like the vendor UI (and services._book)
+    # full vs available by head-count, like the vendor UI (and booking.book)
     full = s["bookedMembers"] >= s["maxBookings"]
     location = names.get(s.get("resourceId"))
-    start = _parse(s["startDate"])
+    start = parse(s["startDate"])
+    end = start + timedelta(seconds=s["duration"])
     # both dates are nullable; the vendor UI treats a missing bookable_at as "open now"
-    opens = _parse(s["bookable_at"]) if s.get("bookable_at") else now
-    closes = _parse(s["bookable_until"]) if s.get("bookable_until") else start
+    opens = parse(s["bookable_at"]) if s.get("bookable_at") else now
+    closes = parse(s["bookable_until"]) if s.get("bookable_until") else start
+    row = Session(
+        s["id"], start, end, s["description"], location, opens, "closed", closes,
+        s["bookedMembers"], s["maxBookings"], s.get("activityId"),
+    )
     if opens > now:  # not bookable yet: one event at the opening instant, for triggers
+        sessions.append(row._replace(state="opening"))
         return "booking_openings", CalendarEvent(
             start=opens,
             end=opens + OPENING_DURATION,
@@ -174,7 +228,8 @@ def _session(s: dict[str, Any], now: datetime, names: dict[int, str], **_: Any) 
                 f"Séance n°{s['id']}\nSéance le {_fr(start)}\nOuverture des réservations"
             ),
         )
-    if closes < now:
+    if closes < now:  # window over: a greyed row for the card, no calendar event
+        sessions.append(row)
         return None
     ev = _lesson_event(
         s,
@@ -186,6 +241,7 @@ def _session(s: dict[str, Any], now: datetime, names: dict[int, str], **_: Any) 
             f"Réservable jusqu'au {_fr(closes)}"
         ),
     )
+    sessions.append(row._replace(state="full" if full else "available"))
     ev.summary = f"{ev.summary} {s['bookedMembers']}/{s['maxBookings']}"
     return ("full_sessions" if full else "available_sessions"), ev
 
@@ -209,7 +265,7 @@ def build_data(
     waiting = upcoming.get("waitingBookings") or []
     if not all(isinstance(x, list) for x in (bookings, waiting, sessions or [])):
         raise ValueError("Unexpected Deciplus payload shape")
-    data.held = [_held(i) for i in bookings if i is not None]
+    data.held = [_held(i) for i in (*bookings, *waiting) if i is not None]
     data.waiting = sum(1 for i in waiting if i is not None)
     ctx = {
         "zone_id": zone_id,
@@ -218,6 +274,7 @@ def build_data(
             r["id"]: r.get("name") for r in resources or [] if isinstance(r, dict) and "id" in r
         },
         "positions": data.wait_positions,
+        "sessions": data.sessions,
     }
     work = [
         *((_booking, i) for i in bookings),
@@ -239,6 +296,7 @@ def build_data(
 
     for events in data.lists():
         events.sort(key=lambda e: e.start)
+    data.sessions.sort(key=lambda s: s.start)
     return data
 
 
@@ -319,7 +377,8 @@ def probe_session(data: DeciplusData) -> int | None:
 
 
 class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
-    """Polls the members API; fires lifecycle events; refreshes right after an opening."""
+    """Polls the members API; fires lifecycle events; refreshes right after an opening and
+    books the pre-bookings that opened."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, client: DeciplusClient) -> None:
         minutes = entry.options.get(CONF_SCAN_MINUTES, DEFAULT_SCAN_MINUTES)
@@ -337,22 +396,140 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
         # learned booking limits (quotas.learn), kept across restarts
         self.quotas: dict[str, Any] = {}
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, storage_key(entry.entry_id))
+        # sessions to book at their opening (prebooking.py), kept across restarts
+        self.prebookings: dict[int, Prebooking] = {}
+        self._queue_store: Store[list[dict[str, Any]]] = Store(
+            hass, STORAGE_VERSION, f"{storage_key(entry.entry_id)}.prebookings"
+        )
+        self._running: set[int] = set()  # pre-bookings being booked right now
         self._opening_unsub: CALLBACK_TYPE | None = None
         entry.async_on_unload(self._cancel_opening_refresh)
 
     async def _async_setup(self) -> None:
         self.quotas = await self._store.async_load() or {}
+        self.prebookings = load(await self._queue_store.async_load())
 
     def observe(self, session: dict[str, Any], found: list[str], held: list[Held]) -> bool:
         """Feed one pre-check (probe or book_session) to the learned limits; True if changed."""
         try:
-            start = _parse(session["startDate"])
+            start = parse(session["startDate"])
         except (KeyError, TypeError, ValueError):
             return False
         if not learn(self.quotas, held, start, session.get("activityId"), found):
             return False
         self._store.async_delay_save(lambda: self.quotas, SAVE_DELAY)
         return True
+
+    # ---- pre-bookings --------------------------------------------------------
+
+    def _save_queue(self) -> None:
+        self._queue_store.async_delay_save(lambda: dump(self.prebookings), SAVE_DELAY)
+
+    def _sync_prebookings(self, data: DeciplusData | None = None) -> None:
+        """Mirror the queue into the Pré-réservations calendar list, with the projection."""
+        if data := data or self.data:
+            quota = self.quotas.get("simultaneous")
+            data.prebookings = sorted(
+                (event(p, projected(p, data.held, self.prebookings), quota) for p in self.prebookings.values()),
+                key=lambda e: e.start,
+            )
+
+    @callback
+    def schedule(self, p: Prebooking) -> int:
+        """Queue (or update) a pre-booking; visible at once, booked at its opening.
+        Returns the registrations projected at that opening, this one included."""
+        self.prebookings[p.session_id] = p
+        self._save_queue()
+        self._sync_prebookings()
+        self.async_update_listeners()
+        if self.data:
+            self._arm_opening_refresh(self.data, dt_util.now())
+        return projected(p, self.data.held if self.data else [], self.prebookings)
+
+    @callback
+    def unschedule(self, session_id: int) -> bool:
+        """Drop a pre-booking; False when the id was not queued."""
+        if self.prebookings.pop(session_id, None) is None:
+            return False
+        self._save_queue()
+        self._sync_prebookings()
+        self.async_update_listeners()
+        return True
+
+    def _report(self, p: Prebooking, result: dict[str, Any]) -> None:
+        self.hass.bus.async_fire(
+            EVENT_PREBOOKING_RESULT,
+            {
+                "session_id": p.session_id,
+                "zone_id": self.zone_id,
+                "summary": p.summary,
+                "start": p.start.isoformat(),
+                **result,
+            },
+        )
+
+    def _finish(self, p: Prebooking, result: dict[str, Any]) -> None:
+        """A pre-booking reached its outcome: out of the queue, reported on the bus."""
+        self.prebookings.pop(p.session_id, None)
+        self._running.discard(p.session_id)
+        self._save_queue()
+        self._report(p, result)
+
+    def _block(self, p: Prebooking, code: str, message: str | None = None) -> None:
+        """Refused for a reason that can clear (quota, unpaid…): keep it, retry each poll.
+        Reported once, when it first gets blocked."""
+        if not p.blocked:
+            self._report(p, {"result": "blocked", "code": code, "message": message})
+        if code != p.blocked:
+            self.prebookings[p.session_id] = p._replace(blocked=code)
+            self._save_queue()
+        self._running.discard(p.session_id)
+
+    async def _run(self, due: list[Prebooking]) -> None:
+        """Book the pre-bookings whose window opened, one after the other (same quota)."""
+        for p in due:
+            if p.session_id not in self.prebookings:  # dropped by the user meanwhile
+                self._running.discard(p.session_id)
+                continue
+            try:
+                if p.blocked:
+                    # one GET, no blind POST: the pre-check says whether the rule cleared
+                    session, messages = await self.client.async_get_session(p.session_id)
+                    found = codes(messages)
+                    self.observe(session, found, self.data.held if self.data else [])
+                    if code := still_blocked(found):
+                        self._block(p, code)
+                        continue
+                result = await book(self, p.session_id, fallback=p.fallback, guests=p.guests)
+            except DeciplusError:  # the pre-check itself failed: next poll
+                self._running.discard(p.session_id)
+                continue
+            except HomeAssistantError as err:
+                code = (err.translation_placeholders or {}).get("code")
+                if retryable(err.translation_key, code):
+                    self._block(p, code or "UNREACHABLE", str(err))
+                    self._sync_prebookings()
+                    self.async_update_listeners()
+                    continue
+                result = {"result": "failed", "code": code, "message": str(err)}
+            self._finish(p, result)
+            self._sync_prebookings()
+            self.async_update_listeners()
+
+    def _settle_prebookings(self, data: DeciplusData, now: datetime) -> None:
+        """Expire, close or start the queued pre-bookings against a fresh poll."""
+        registered = {_sid(e) for e in (*data.bookings, *data.waiting_list)}
+        due, expired, done = split(self.prebookings, registered, now)
+        for p in expired:
+            self._finish(p, {"result": "expired"})
+        for p in done:
+            self._finish(p, {"result": "already_registered"})
+        if due := [p for p in due if p.session_id not in self._running]:
+            # a task, not awaited here: the opening retries can take a minute. The entries
+            # stay stored until their outcome is known, so a reload mid-way re-runs them
+            self._running |= {p.session_id for p in due}
+            self.config_entry.async_create_background_task(self.hass, self._run(due), "deciplus prebookings")
+        self._sync_prebookings(data)
 
     async def _probe(self, data: DeciplusData) -> None:
         """One GET on a session the member is not registered on: its `messages` are the
@@ -370,7 +547,7 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
             data.probe = {
                 "session_id": sid,
                 "summary": session.get("description"),
-                "start": _parse(session["startDate"]).isoformat(),
+                "start": parse(session["startDate"]).isoformat(),
             }
         except (KeyError, TypeError, ValueError):
             data.probe = {"session_id": sid}
@@ -386,6 +563,20 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
     def _refresh_at_opening(self, _now: datetime) -> None:
         self._opening_unsub = None
         self.hass.async_create_task(self.async_request_refresh())
+
+    @callback
+    def _arm_opening_refresh(self, data: DeciplusData, now: datetime) -> None:
+        """Openings are known in advance: refresh right after the next one (planning or
+        pre-booking), no polling needed; the refresh also books what just opened."""
+        self._cancel_opening_refresh()
+        instants = [t for t in (next_opening(data, now), next_opens(self.prebookings, now)) if t]
+        if any(p.blocked for p in self.prebookings.values()):
+            # a registration stops counting when its class starts: retry right after
+            instants += [h.start for h in data.held if h.start and h.start > now]
+        if instants:
+            self._opening_unsub = async_track_point_in_time(
+                self.hass, self._refresh_at_opening, min(instants) + OPENING_REFRESH_DELAY
+            )
 
     async def _async_update_data(self) -> DeciplusData:
         now = dt_util.now()
@@ -417,15 +608,12 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
         except DeciplusError as err:
             raise UpdateFailed(str(err)) from err
 
-        for event, payload in diff_events(self.data, data, self.zone_id, now, self.ignore_cancel):
-            self.hass.bus.async_fire(event, payload)
+        self._settle_prebookings(data, now)
+
+        for name, payload in diff_events(self.data, data, self.zone_id, now, self.ignore_cancel):
+            self.hass.bus.async_fire(name, payload)
         # an ignored id is consumed once the cancellation shows in the data
         self.ignore_cancel &= {_sid(e) for e in (*data.bookings, *data.waiting_list)}
 
-        # openings are known in advance: refresh right after the next one, no polling needed
-        self._cancel_opening_refresh()
-        if opens := next_opening(data, now):
-            self._opening_unsub = async_track_point_in_time(
-                self.hass, self._refresh_at_opening, opens + OPENING_REFRESH_DELAY
-            )
+        self._arm_opening_refresh(data, now)
         return data

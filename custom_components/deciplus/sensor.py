@@ -21,7 +21,8 @@ async def async_setup_entry(
 
 
 class DeciplusHeldBookings(DeciplusEntity, SensorEntity):
-    """Upcoming bookings of the account (all sites): what the simultaneous quota counts."""
+    """Registrations of the account (all sites), bookings and waiting-list entries alike:
+    the number the simultaneous quota applies to. Each stops counting at its class start."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:calendar-check"
@@ -36,8 +37,10 @@ class DeciplusHeldBookings(DeciplusEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         quotas = self.coordinator.quotas
+        data = self.coordinator.data
         return {
-            "waiting_list": self.coordinator.data.waiting,
+            "bookings": len(data.held) - data.waiting,
+            "waiting_list": data.waiting,
             # learned limits: unknown (None) until reached once, see quotas.learn
             "quota": quotas.get("simultaneous"),
             "quota_per_day": quotas.get("per_day"),

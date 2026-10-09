@@ -1,11 +1,12 @@
-"""Pure helpers of services.py: seat picking and session id coercion."""
+"""Pure helpers of booking.py / services.py: seat picking, opening window, session id coercion."""
 
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from custom_components.deciplus.services import BOOK_SCHEMA, _opens_soon, free_seat  # noqa: E402
+from custom_components.deciplus.booking import _opens_soon, free_seat  # noqa: E402
+from custom_components.deciplus.services import BOOK_SCHEMA  # noqa: E402
 import voluptuous as vol  # noqa: E402  after HA, which may swap in its own implementation
 
 PLACES = [
@@ -26,13 +27,13 @@ def test_free_seat():
 
 
 def test_book_schema():
-    for raw in ("1013", 1013, "session-1013", "opening-1013", "booking-1013", "waiting-1013"):
+    for raw in ("1013", 1013, "session-1013", "opening-1013", "booking-1013", "waiting-1013", "prebooking-1013"):
         data = BOOK_SCHEMA({"device_id": "dev", "session_id": raw})
         assert data["session_id"] == 1013
         assert data["device_id"] == ["dev"]
-        assert data["waiting_list_fallback"] is True and data["guests"] == 0
-    data = BOOK_SCHEMA({"device_id": ["a", "b"], "session_id": "7", "guests": "2", "place_id": "42", "area_id": "x"})
-    assert data["guests"] == 2 and data["place_id"] == 42 and data["device_id"] == ["a", "b"]
+        assert data["waiting_list_fallback"] is True and data["guests"] == 0 and data["schedule"] is False
+    data = BOOK_SCHEMA({"device_id": ["a", "b"], "session_id": "7", "guests": "2", "place_id": "42", "area_id": "x", "schedule": "on"})
+    assert data["guests"] == 2 and data["place_id"] == 42 and data["device_id"] == ["a", "b"] and data["schedule"] is True
     # a pasted description must not collapse into one long number
     for bad in ("Séance n°1013\nInscrits : 22/26", "1013-1014", "", "abc"):
         try:

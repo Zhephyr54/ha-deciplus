@@ -41,9 +41,9 @@ def test_build_data():
     assert "\nPénalité si annulation après le " in data.bookings[0].description
     assert data.bookings[0].description.endswith(": 5-day booking ban after unhonoured bookings")
 
-    # what the quota rules count: every booking of the account, other zones included
-    assert len(data.held) == 6 and data.waiting == 2
-    assert {h.activity_name for h in data.held} == {"Body Pump", "Boxing", "Spinning", "Zumba", "Pilates"}
+    # what the quota rules count: every booking and queue entry of the account, other zones included
+    assert len(data.held) == 8 and data.waiting == 2
+    assert {h.activity_name for h in data.held} == {"Body Pump", "Boxing", "Spinning", "Zumba", "Pilates", "Bootcamp"}
 
     assert [e.uid for e in data.waiting_list] == ["waiting-1005", "waiting-1006"]
     assert data.waiting_list[0].summary == "Bootcamp (en attente – 13)"
@@ -64,6 +64,27 @@ def test_build_data():
     # registered / registered-waiting-list never leak into the session calendars
     session_uids = {e.uid for e in data.available_sessions + data.full_sessions + data.booking_openings}
     assert not {"session-1003", "session-1005", "session-1011", "session-1014"} & session_uids
+
+    # every session as a structured row (picker, card feed), by start, with the plain title
+    rows = {s.id: s for s in data.sessions}
+    assert [s.start for s in data.sessions] == sorted(s.start for s in data.sessions)
+    assert {i: r.state for i, r in rows.items()} == {
+        1001: "full", 1002: "full", 1004: "available", 1007: "full", 1008: "available",
+        1009: "available", 1013: "opening", 1015: "opening",
+        1003: "booked", 1011: "booked", 1014: "booked", 1010: "booked", 1012: "booked",
+        1005: "waiting", 1006: "waiting",
+    }
+    kids = rows[1013]
+    assert (kids.summary, kids.location, kids.booked, kids.max) == ("Kids Gym", "Main Studio", 2, 16)
+    assert kids.opens == datetime(2026, 9, 12, 14, 0, tzinfo=PARIS)
+    assert kids.end - kids.start == timedelta(minutes=45)
+    assert (rows[1003].places, rows[1003].penalty_text) == (1, "5-day booking ban after unhonoured bookings")
+    assert rows[1003].penalty_after == datetime(2026, 9, 21, 11, 15, tzinfo=PARIS)
+    assert rows[1005].wait_index == 13 and rows[1005].summary == "Bootcamp"
+    # a closed window keeps a greyed row and no calendar event
+    closed = {**sessions[3], "id": 6, "bookable_until": "2026-09-09T14:00:00+0200"}
+    late = build_data({}, [closed], [], 1, NOW)
+    assert late.sessions[0].state == "closed" and late.lists() == DeciplusData().lists()
 
     for events in data.lists():
         assert [e.start for e in events] == sorted(e.start for e in events)

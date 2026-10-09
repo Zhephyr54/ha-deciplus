@@ -20,16 +20,18 @@ from .api import DeciplusClient
 from .const import DOMAIN
 from .coordinator import STORAGE_VERSION, DeciplusCoordinator, storage_key
 from .services import async_setup_services
+from .websocket import async_setup_websocket
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.CALENDAR, Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.CALENDAR, Platform.SELECT, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 type DeciplusConfigEntry = ConfigEntry[DeciplusCoordinator]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the domain services once."""
+    """Register the domain services and the planning feed once."""
     async_setup_services(hass)
+    async_setup_websocket(hass)
     return True
 
 
@@ -72,5 +74,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: DeciplusConfigEntry) ->
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Drop the learned booking limits with the entry."""
-    await Store(hass, STORAGE_VERSION, storage_key(entry.entry_id)).async_remove()
+    """Drop the learned booking limits and the pre-booking queue with the entry."""
+    key = storage_key(entry.entry_id)
+    await Store(hass, STORAGE_VERSION, key).async_remove()
+    await Store(hass, STORAGE_VERSION, f"{key}.prebookings").async_remove()

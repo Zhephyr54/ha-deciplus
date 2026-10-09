@@ -8,7 +8,7 @@ Assistant calendars and lets automations book, queue and cancel sessions.
 
 ## Entities
 
-One device per club (named after it) with five calendars:
+One device per club (named after it) with six calendars:
 
 | Calendar           | Content                                                                                                                 |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -17,17 +17,26 @@ One device per club (named after it) with five calendars:
 | Available sessions | Bookable sessions with free places, next 3 weeks                                                                        |
 | Full sessions      | Full sessions you could join the waiting list of                                                                        |
 | Booking openings   | One 15-minute event **at the instant a session becomes bookable** (14 days before it starts), for sessions not yet open |
+| Pré-réservations   | Sessions you asked to be booked the second they open (see [Pre-booking](#pre-booking))                                  |
 
 Event titles carry the occupancy (`Yoga 22/26`); descriptions carry the session id
-(`Séance n°1013`), and uids are `booking-1013` / `waiting-1013` / `session-1013` / `opening-1013`.
-A booking's description also states the club's cancellation penalty and the instant it
-starts applying (`Pénalité si annulation après le …`).
+(`Séance n°1013`), and uids are `booking-1013` / `waiting-1013` / `session-1013` / `opening-1013`
+/ `prebooking-1013`. A booking's description also states the club's cancellation penalty and the
+instant it starts applying (`Pénalité si annulation après le …`). In the calendar card, the
+events of _Bookings_, _Waiting list_ and _Pré-réservations_ have a **Delete** button that
+cancels the booking, leaves the queue or drops the pre-booking.
 
-Plus two entities about your booking limits:
+The planning with the action on each line, booked / queued / pre-booked sessions included, is
+the **[Xplor Deciplus card](https://github.com/Zhephyr54/ha-deciplus-card)** (separate HACS
+dashboard repository). It is fed by the integration's `deciplus/subscribe_planning` websocket
+subscription, pushed on every poll and after every action.
+
+Plus three entities:
 
 | Entity                            | Content                                                                                                                                      |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sensor.<club>_bookings_held`     | bookings you hold (all sites of the account); attributes `waiting_list`, and the learned limits `quota`, `quota_per_day`, `quota_per_activity` |
+| `select.<club>_book_a_session`    | a picker listing every session of the horizon you are not registered on: choosing one books it, joins its waiting list (`– complet`) or pre-books it (`– ouvre le …`). Its state stays `unknown`: it is a button list, not a value |
+| `sensor.<club>_bookings_held`     | registrations you hold, bookings and waiting-list entries together, all sites of the account: the number the quota applies to. Attributes `bookings`, `waiting_list`, and the learned limits `quota`, `quota_per_day`, `quota_per_activity` |
 | `binary_sensor.<club>_booking_blocked` | on when Deciplus would refuse you a booking right now for a reason about *you* (quota reached, unpaid, blacklisted, no valid product…); attribute `reasons` lists the Deciplus codes |
 
 ### How limits work
@@ -41,7 +50,8 @@ a limit is reached while Home Assistant is polling, the max is what you held at 
 club later changes the limit, the value resets and is learned again. Learned values survive
 restarts.
 
-- `quota` — simultaneous bookings held. Exact.
+- `quota` — simultaneous registrations held. A waiting-list entry counts exactly like a
+  booking, and each stops counting the moment its class starts. Exact.
 - `quota_per_day` — bookings on one day; learned when the probe lands on a saturated day.
 - `quota_per_activity` — `{"Spinning": 2}`; learned per activity, when the probe is one.
 - A "per period" limit shows up in `reasons` (`MEMBER_MAX_BOOKING_PER_PERIOD_REACHED`) but has
@@ -73,8 +83,55 @@ renewed automatically. If renewal fails you are asked to re-authenticate.
   `deciplus_booking_confirmed`. Book with the waiting-list fallback and you are "pre-registered".
 - **Polling is the fallback**, every 10 minutes by default, for everything else (someone
   cancelling, clubs without a waiting list). Tune it in the entry's _Configure_ dialog:
-  poll interval 2–60 min, sessions horizon 7–28 days. For a short burst around one class,
+  poll interval 2–60 min, sessions horizon 7–90 days. For a short burst around one class,
   see recipe 7 rather than lowering the interval permanently.
+
+## Pre-booking
+
+A session that is not open yet can be **pre-booked**: pick it in the `select` entity, or call
+`deciplus.book_session` with `schedule: true`. The integration keeps the request (it survives
+restarts) and books it a few seconds after its window opens, with the usual opening retries and
+the same waiting-list fallback and guests. Until then it shows in the _Pré-réservations_
+calendar; drop it with the calendar card's Delete button or `deciplus.cancel_booking`.
+
+- The outcome is one `deciplus_prebooking_result` event: `booked`, `waiting_list`, `failed`
+  (with the Deciplus `code`), `expired` (the session started before it could be booked) or
+  `already_registered` (you booked it by hand meanwhile). The pre-booking is removed in every
+  case, so the calendar only ever shows what is still to come.
+- **Quota at the opening.** The event description tells you in advance what you will hold at
+  that instant (`À l'ouverture : 5/6 réservations prévues`), from your current registrations
+  still upcoming then plus your other pre-bookings opening before; a warning is added when
+  that exceeds the learned quota. If the booking is still refused at the opening for a reason
+  about you (quota, unpaid, blacklisted…), the pre-booking is not dropped: it turns
+  `blocked`, one `deciplus_prebooking_result` with `result: blocked` fires, the calendar title
+  reads `(pré-réservation – bloquée)`, and it is retried the moment the rule clears, which
+  the integration checks at every poll, right after one of your classes starts and right
+  after a cancellation. Freeing a unit is up to you: cancel a booking or a queue entry, or
+  wait for one to start. The final event follows once it is booked, queued, or the session
+  starts.
+- If Home Assistant is off at the opening, the pre-booking runs at startup, as long as the
+  session has not started; by then the class may be full and you end up on the waiting list.
+- You can only pre-book what is loaded: raise the sessions horizon (up to 90 days) to pre-book
+  further ahead.
+
+A dashboard with everything in one place (calendar card + the picker):
+
+```yaml
+type: vertical-stack
+cards:
+  - type: calendar
+    initial_view: listWeek
+    entities:
+      - calendar.my_club_reservations
+      - calendar.my_club_liste_d_attente
+      - calendar.my_club_pre_reservations
+      - calendar.my_club_seances_disponibles
+      - calendar.my_club_seances_completes
+  - type: tile
+    entity: select.my_club_reserver_une_seance
+    features:
+      - type: select-options
+```
 
 ## Actions
 
@@ -88,15 +145,18 @@ Both actions target a **club device** (device picker in the UI; `device_id` in Y
 | `waiting_list_fallback` | default `true`: join the waiting list when the session is full                      |
 | `place_id`              | seat id for sessions with a seat map; left empty, the first free seat is taken      |
 | `guests`                | 0–5 extra anonymous places booked with you (activity must allow invitations). With guests the action fails when there is not enough room instead of queuing you alone |
+| `schedule`              | default `false`: when the session is not open yet, pre-book it instead of failing (see [Pre-booking](#pre-booking)) |
 
-Returns (optional response) `{"result": "booked", "place_id": 42}` or
-`{"result": "waiting_list", "wait_index": 3}`. Right at the opening instant the call retries
-for up to a minute if the server still says "not available yet". Errors carry the Deciplus
-reason (`BOOKING_COMPLETE`, `MEMBER_DONT_HAVE_VALID_PRODUCT`, …).
+Returns (optional response) `{"result": "booked", "place_id": 42}`,
+`{"result": "waiting_list", "wait_index": 3}` or `{"result": "scheduled", "opens": "…",
+"projected": 5, "quota": 6}` (what you will hold at the opening, this one included). Right
+at the opening instant the call retries for up to a minute if the server still says "not
+available yet". Errors carry the Deciplus reason (`BOOKING_COMPLETE`,
+`MEMBER_DONT_HAVE_VALID_PRODUCT`, …).
 
 ### `deciplus.cancel_booking`
 
-`session_id` — cancels a booking or leaves a waiting list.
+`session_id` — cancels a booking, leaves a waiting list, or drops a pre-booking.
 
 ## Events
 
@@ -109,6 +169,7 @@ consecutive polls, so nothing fires for changes that happened while Home Assista
 | `deciplus_booking_cancelled`       | a booking or queue spot disappeared before its start, not via HA | `kind`: `booking` \| `waiting_list` |
 | `deciplus_waiting_position_changed`| your position in a queue moved                                   | `position`, `previous_position`     |
 | `deciplus_session_available`       | a full session gained a free place                               |                                     |
+| `deciplus_prebooking_result`       | a pre-booking reached its outcome, or got `blocked` (not final: it is retried) | `result`: `booked` \| `waiting_list` \| `blocked` \| `failed` \| `expired` \| `already_registered`; `place_id` / `wait_index` / `code` + `message` as applicable |
 
 ## Recipes
 
@@ -284,8 +345,16 @@ triggers:
   - trigger: event
     event_type: deciplus_session_available
     id: freed
+  - trigger: event
+    event_type: deciplus_prebooking_result
+    id: prebooked
 actions:
   - choose:
+      - conditions: "{{ trigger.id == 'prebooked' }}"
+        sequence:
+          - action: notify.mobile_app_my_phone
+            data:
+              message: "Pre-booking {{ trigger.event.data.summary }}: {{ trigger.event.data.result }} {{ trigger.event.data.code | default('') }}"
       - conditions: "{{ trigger.id == 'confirmed' }}"
         sequence:
           - action: notify.mobile_app_my_phone
@@ -350,6 +419,9 @@ data:
   Assistant was off, and a promotion and a club cancellation of the same class between two
   polls would go unnoticed.
 - The size of a waiting list is not exposed by the API (only your own position).
+- A pre-booking is booked by Home Assistant, not by Deciplus: if HA is off at the opening it
+  is booked at startup (waiting list if the class filled up meanwhile), and only sessions
+  inside the loaded horizon can be pre-booked.
 
 ## Obtenir ses identifiants (FR)
 
@@ -362,8 +434,17 @@ passe est conservé par Home Assistant pour renouveler le jeton d'accès (valabl
 
 API notes: [docs/deciplus-api.md](docs/deciplus-api.md).
 
+Open live test, "does a cancelled booking keep counting toward the quota until its class
+starts?": hold exactly quota − 1 registrations and check the probe is clean; book a class two
+or more days away (probe flags); an hour or more later cancel it from the app and probe at
+once. Still flagged = it keeps counting; then check whether the cancelled booking still shows
+in `/bookings/upcoming` and probe again after that class has started. If clean, repeat with a
+class starting within a few hours. If confirmed, the integration can keep known cancellations
+in the count until their start.
+
 ```sh
 docker run --rm -v "$PWD":/w -w /w ghcr.io/home-assistant/home-assistant:stable sh -c "
   python tests/test_build_data.py && python tests/test_events.py && python tests/test_api.py &&
-  python tests/test_quotas.py && python tests/test_services_helpers.py && python tests/check_translations.py"
+  python tests/test_quotas.py && python tests/test_prebooking.py && python tests/test_planning.py &&
+  python tests/test_services_helpers.py && python tests/check_translations.py"
 ```

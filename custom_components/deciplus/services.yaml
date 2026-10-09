@@ -32,6 +32,11 @@ book_session:
           min: 0
           max: 5
           mode: box
+    schedule:
+      required: false
+      default: false
+      selector:
+        boolean:
 
 cancel_booking:
   target:

@@ -16,7 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .api import MESSAGE_CODES
 
-QUOTA = "MEMBER_MAX_BOOKING_QUOTA_REACHED"  # simultaneous bookings held
+QUOTA = "MEMBER_MAX_BOOKING_QUOTA_REACHED"  # simultaneous registrations (bookings + queue entries)
 QUOTA_DAY = "MEMBER_HAS_TOO_MANY_BOOKING_FOR_THE_DAY"
 QUOTA_ACTIVITY = "MEMBER_MAX_ACTIVITY_BOOKING_QUOTA_REACHED"
 
@@ -43,7 +43,8 @@ SESSION_RULES = {
 
 
 class Held(NamedTuple):
-    """One upcoming booking of the member (any zone)."""
+    """One upcoming registration of the member (any zone): a booking or a waiting-list
+    entry, both count the same (tested live), each until its class starts."""
 
     start: datetime | None
     activity_id: int | None

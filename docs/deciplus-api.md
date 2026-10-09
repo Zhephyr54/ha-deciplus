@@ -129,10 +129,10 @@ Response shapes are those consumed by the app or seen in captured payloads.
 | `GET /members/v1/activities[?zoneId]` | `[{id, name, description, color, isWeb, allowInvitations, minPlacesToBook, reservationTags, …}]` (`isWeb: "N"` = not bookable online) |
 | `GET /members/v1/resources?zoneId` | `[{id, name, description, idz, isOnline, location?, metadata{address, postalCode, city}, maxPlayerCount, …}]` |
 | `GET /members/v1/coaches?zoneId` | `[{id, name, profilePictureUrl}]` |
-| `GET /members/v1/sessions?zoneId&from=YYYY-MM-DD&to=YYYY-MM-DD[&activityIds[]…]` | see §5. The app always asks one week (`from` = Monday, `to` = +6 days) |
+| `GET /members/v1/sessions?zoneId&from=YYYY-MM-DD&to=YYYY-MM-DD[&activityIds[]…]` | see §5. The app always asks one week (`from` = Monday, `to` = +6 days), but an 18-month range was accepted in one call and returned every published session (the club's planning ran ~10 months ahead, ~1200 sessions, ~600 KB) |
 | `GET /members/v1/sessions/{id}[/{code}]` | `{booking: {…session…, participants, bookedMembers, map, status: {visits: […]}, details, tags, visibility}}`. `map` is `null` or a seat map `{x, y, places: [{id, x, y, name, type: "seat" \| "coach" \| "object", isAvailable: "O" \| "N", isBooked}]}`; a seat is bookable when `type == "seat" && isAvailable == "O" && !isBooked` (`ModalPlaceMap.vue → onClickCell`) |
-| ↳ `messages` (same response, ignored by the web app) | server-side **pre-check of the booking rules for the calling member**, as the sentences of §6 (e.g. `"This member has reached his quota"`). Observed live: empty when bookable; `"This booking is no longer available"` (window closed) and `"This member is already registered to this booking"` come **alone**, even on a full session or at quota; otherwise the rules accumulate: `["This booking is complete", "This member has reached his quota"]`, `["This booking is not available yet", "This member has reached his quota"]`. So the quota state is readable on any session that is not past its window and not already booked, including ones that open later. Tested: cancelling a booking clears the quota sentence on the next GET, so the quota counts held bookings, not cancelled ones. The session body also carries `sanctionText` / `cancelDateSanction` (§5.1) and `canRequestExpressReplacement` (unknown, not in the web app) |
-| `GET /members/v1/classes/{id}` | `{booking: {…}}` used for the place map |
+| ↳ `messages` (same response, ignored by the web app) | server-side **pre-check of the booking rules for the calling member**, as the sentences of §6 (e.g. `"This member has reached his quota"`). Observed live: empty when bookable; `"This booking is no longer available"` (window closed) and `"This member is already registered to this booking"` come **alone**, even on a full session or at quota; otherwise the rules accumulate: `["This booking is complete", "This member has reached his quota"]`, `["This booking is not available yet", "This member has reached his quota"]`. So the quota state is readable on any session that is not past its window and not already booked, including ones that open later. **What the quota counts (tested live):** bookings **and waiting-list entries** alike (5 bookings + 1 queue entry = reached, with a limit of 6); a registration stops counting **at its class start**; a booking cancelled right after being made stops counting at once. Open point: a booking cancelled later (hours or days after booking, or close to the class) may keep counting until the class starts — one unexplained unit vanished exactly at a class start, and that is the leading explanation; test protocol in README *Development*. The session body also carries `sanctionText` / `cancelDateSanction` (§5.1) and `canRequestExpressReplacement` (unknown, not in the web app) |
+| `GET /members/v1/classes/{id}` | `{booking: {id, description, bookedMembers, maxBookings, coach, activity{id, name}, resource{id, idz, name}, startDate, duration, bookable_at/until, sanctionText, cancelDateSanction, visits, numberOfReservedPlaces, expressReplacementPending}, messages}` — a flatter view of the same session, used for the place map. No waiting-list size anywhere: `awaitingMembers` only appears in the `addMemberInQueue` response |
 | `GET /members/v1/sessions/next-available?zoneId&from…` | next session matching filters |
 | `GET /members/v1/v3/resourcetimeslots?zoneId&from&to` | free resource slots (court booking mode) |
 | `GET /members/v1/sessions/{id}/share` | `{link}` |
@@ -219,7 +219,9 @@ Cancel (`prepCancelBooking`) is the same `DELETE …/cancelMember` for both stat
 
 The server enforces these rules itself (see §6): the client checks are UX only. Whether
 `addMemberInQueue` is accepted on a session that still has places is not exercised by the
-app — unknown.
+app — unknown. At the simultaneous-bookings quota it is refused with
+`MEMBER_MAX_BOOKING_QUOTA_REACHED`, like a booking, and a queue entry counts toward that quota
+exactly like a booking: the waiting list is no way around it.
 
 ## 6. Error format & catalogue
 
@@ -285,10 +287,11 @@ to `getBookingErrorTypes(message)`, which matches `message` against the sentence
 | Available / Full / Booking-openings calendars, 21 days ahead | `GET /members/v1/sessions?zoneId&from&to` |
 | session location | `GET /members/v1/resources?zoneId` |
 | `deciplus.book_session` | `GET /members/v1/sessions/{id}` (head-count, seat map, `bookable_at`) then `POST …/addMember` with `placeId` (given or first free seat) and `[{}] * guests`, or `…/addMemberInQueue` when full |
-| "Booking blocked" binary sensor, learned limits on the "Bookings held" sensor | one `GET /members/v1/sessions/{id}` per poll on the earliest session the member is not registered on; `messages` → codes (`quotas.py`). The count the quota rules apply to is `len(bookings)` of `/bookings/upcoming` (all zones) |
-| `deciplus.cancel_booking` | `DELETE /members/v1/booking/{id}/cancelMember` |
+| "Booking blocked" binary sensor, learned limits on the "Bookings held" sensor | one `GET /members/v1/sessions/{id}` per poll on the earliest session the member is not registered on; `messages` → codes (`quotas.py`). The count the quota rules apply to is `len(bookings) + len(waitingBookings)` of `/bookings/upcoming` (all zones) |
+| `deciplus.cancel_booking` | `DELETE /members/v1/booking/{id}/cancelMember` (nothing when the id is a queued pre-booking) |
+| pre-bookings (`book_session` with `schedule`, the picker, the *Pré-réservations* calendar) | no extra call: `GET /members/v1/sessions/{id}` once when queued (for `bookable_at`, title, start), then the normal `book_session` sequence at `bookable_at + 5 s`, run by the coordinator's opening timer. A refusal about the member (quota, unpaid…) keeps the entry *blocked*: one `GET /members/v1/sessions/{id}` per poll re-reads its `messages`, the POST is only retried once the rule is gone, and a refresh is also scheduled at the next class start of a held registration (that frees a unit). The queue is HA storage (`.storage/deciplus.<entry>.prebookings`) |
 | lifecycle events (`deciplus_booking_confirmed`, `deciplus_booking_cancelled`, `deciplus_waiting_position_changed`, `deciplus_session_available`) | no extra call: diff of two consecutive `/bookings/upcoming` + `/sessions` polls (`coordinator.diff_events`) |
 | refresh right after a booking window opens | none: scheduled locally from `bookable_at` |
+| companion card feed (`deciplus/subscribe_planning` websocket, `websocket.py`) | none: rows built from the coordinator data (every session of the horizon with its state, head-count, opening/closing instants, queue position, places, penalty, pre-booking projection / blocked code) and pushed to subscribers on each refresh |
 
-Open points to confirm live: whether `/sessions` accepts a 21-day range in one call (the
-app only ever asks 7 days), and whether `addMemberInQueue` is accepted on a non-full session.
+Open point to confirm live: whether `addMemberInQueue` is accepted on a non-full session.

@@ -58,7 +58,7 @@ OPTIONS_SCHEMA = vol.Schema(
             NumberSelectorConfig(min=2, max=60, step=1, unit_of_measurement="min", mode=NumberSelectorMode.BOX)
         ),
         vol.Required(CONF_DAYS_AHEAD, default=DEFAULT_DAYS_AHEAD): NumberSelector(
-            NumberSelectorConfig(min=7, max=28, step=1, unit_of_measurement="d", mode=NumberSelectorMode.BOX)
+            NumberSelectorConfig(min=7, max=90, step=1, unit_of_measurement="d", mode=NumberSelectorMode.BOX)
         ),
     }
 )

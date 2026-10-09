@@ -51,7 +51,7 @@
         },
         "data_description": {
           "scan_minutes": "Minutes between two refreshes of the planning (2–60). Booking openings are refreshed on time regardless.",
-          "days_ahead": "How many days of sessions to load (7–28). Openings appear 14 days before a class, so 21 shows next week's openings."
+          "days_ahead": "How many days of sessions to load (7–90). Openings appear 14 days before a class, so 21 shows next week's openings; a longer horizon lets you pre-book further ahead but makes every poll heavier."
         }
       }
     }
@@ -62,23 +62,27 @@
       "waiting_list": { "name": "Waiting list" },
       "available_sessions": { "name": "Available sessions" },
       "full_sessions": { "name": "Full sessions" },
-      "booking_openings": { "name": "Booking openings" }
+      "booking_openings": { "name": "Booking openings" },
+      "prebookings": { "name": "Pre-bookings" }
     },
     "sensor": {
       "held_bookings": { "name": "Bookings held" }
     },
     "binary_sensor": {
       "booking_blocked": { "name": "Booking blocked" }
+    },
+    "select": {
+      "book": { "name": "Book a session" }
     }
   },
   "services": {
     "book_session": {
       "name": "Book a session",
-      "description": "Books a session; when it is full, joins its waiting list unless disabled.",
+      "description": "Books a session; when it is full, joins its waiting list unless disabled; when it is not open yet, fails unless scheduled.",
       "fields": {
         "session_id": {
           "name": "Session",
-          "description": "Session id, as in the event description (\"Séance n°1013\") or any calendar event uid (\"opening-1013\", \"session-1013\", \"booking-1013\", \"waiting-1013\")."
+          "description": "Session id, as in the event description (\"Séance n°1013\") or any calendar event uid (\"opening-1013\", \"session-1013\", \"booking-1013\", \"waiting-1013\", \"prebooking-1013\")."
         },
         "waiting_list_fallback": {
           "name": "Waiting list fallback",
@@ -91,12 +95,16 @@
         "guests": {
           "name": "Guests",
           "description": "Extra anonymous places to book with you (0–5), if the activity allows invitations."
+        },
+        "schedule": {
+          "name": "Book when it opens",
+          "description": "If the session is not open for booking yet, pre-book it: it is booked automatically the second its window opens, with the same waiting-list fallback and guests. Shown in the Pre-bookings calendar until then."
         }
       }
     },
     "cancel_booking": {
       "name": "Cancel a booking",
-      "description": "Cancels a booking or leaves the waiting list of a session.",
+      "description": "Cancels a booking, leaves the waiting list of a session, or drops a pre-booking.",
       "fields": {
         "session_id": {
           "name": "Session",

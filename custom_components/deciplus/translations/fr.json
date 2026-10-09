@@ -51,7 +51,7 @@
         },
         "data_description": {
           "scan_minutes": "Minutes entre deux rafraîchissements du planning (2–60). Les ouvertures de réservation sont rafraîchies à l'heure quoi qu'il arrive.",
-          "days_ahead": "Nombre de jours de séances à charger (7–28). Les ouvertures apparaissent 14 jours avant une séance : 21 montre celles de la semaine prochaine."
+          "days_ahead": "Nombre de jours de séances à charger (7–90). Les ouvertures apparaissent 14 jours avant une séance : 21 montre celles de la semaine prochaine ; un horizon plus long permet de pré-réserver plus loin mais alourdit chaque rafraîchissement."
         }
       }
     }
@@ -62,23 +62,27 @@
       "waiting_list": { "name": "Liste d'attente" },
       "available_sessions": { "name": "Séances disponibles" },
       "full_sessions": { "name": "Séances complètes" },
-      "booking_openings": { "name": "Ouvertures de réservation" }
+      "booking_openings": { "name": "Ouvertures de réservation" },
+      "prebookings": { "name": "Pré-réservations" }
     },
     "sensor": {
       "held_bookings": { "name": "Réservations en cours" }
     },
     "binary_sensor": {
       "booking_blocked": { "name": "Réservation bloquée" }
+    },
+    "select": {
+      "book": { "name": "Réserver une séance" }
     }
   },
   "services": {
     "book_session": {
       "name": "Réserver une séance",
-      "description": "Réserve une séance ; si elle est complète, rejoint sa liste d'attente sauf si désactivé.",
+      "description": "Réserve une séance ; si elle est complète, rejoint sa liste d'attente sauf si désactivé ; si elle n'est pas encore ouverte, échoue sauf si pré-réservée.",
       "fields": {
         "session_id": {
           "name": "Séance",
-          "description": "Numéro de la séance, tel qu'indiqué dans la description de l'événement (« Séance n°1013 ») ou dans l'uid de n'importe quel événement (« opening-1013 », « session-1013 », « booking-1013 », « waiting-1013 »)."
+          "description": "Numéro de la séance, tel qu'indiqué dans la description de l'événement (« Séance n°1013 ») ou dans l'uid de n'importe quel événement (« opening-1013 », « session-1013 », « booking-1013 », « waiting-1013 », « prebooking-1013 »)."
         },
         "waiting_list_fallback": {
           "name": "Repli sur la liste d'attente",
@@ -91,12 +95,16 @@
         "guests": {
           "name": "Invités",
           "description": "Places supplémentaires anonymes réservées avec vous (0–5), si l'activité autorise les invitations."
+        },
+        "schedule": {
+          "name": "Pré-réserver si pas encore ouverte",
+          "description": "Si les réservations de la séance ne sont pas encore ouvertes, la pré-réserve : elle est réservée automatiquement à la seconde où la fenêtre s'ouvre, avec le même repli sur la liste d'attente et les mêmes invités. Visible dans le calendrier Pré-réservations d'ici là."
         }
       }
     },
     "cancel_booking": {
       "name": "Annuler une réservation",
-      "description": "Annule une réservation ou quitte la liste d'attente d'une séance.",
+      "description": "Annule une réservation, quitte la liste d'attente d'une séance ou supprime une pré-réservation.",
       "fields": {
         "session_id": {
           "name": "Séance",
