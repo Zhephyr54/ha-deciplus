@@ -37,7 +37,6 @@ def test_planning():
         "quota_per_activity": {"Spinning": 2}, "blocked": [],
     }
     rows = {r["id"]: r for r in feed["rows"]}
-    assert [r["id"] for r in feed["rows"]] == sorted(rows, key=lambda i: rows[i]["start"]) or True
     assert [r["start"] for r in feed["rows"]] == [r["start"] for r in sorted(feed["rows"], key=lambda r: datetime.fromisoformat(r["start"]))]
     assert {i: r["state"] for i, r in rows.items() if i in (1001, 1004, 1013, 1003, 1005, 6, 4242)} == {
         1001: "full", 1004: "available", 1013: "prebooked", 1003: "booked", 1005: "waiting", 6: "closed", 4242: "prebooked",

@@ -134,7 +134,9 @@ def _lesson_event(lesson: dict[str, Any], **kwargs: Any) -> CalendarEvent:
 Converted = tuple[str, CalendarEvent] | None  # (DeciplusData field, event)
 
 
-def _booking(item: dict[str, Any], zone_id: int, sessions: list[Session], **_: Any) -> Converted:
+def _booking(
+    item: dict[str, Any], zone_id: int, sessions: list[Session], now: datetime, **_: Any
+) -> Converted:
     lesson = item["booking"]
     if lesson["resource"]["idz"] != zone_id:
         return None  # /bookings/upcoming spans all zones of the account
@@ -155,9 +157,10 @@ def _booking(item: dict[str, Any], zone_id: int, sessions: list[Session], **_: A
         location=lesson["resource"].get("name"),
         description=description,
     )
-    sessions.append(
+    sessions.append(  # a started class is over for the card, like the count (see `held`)
         Session(
-            lesson["id"], ev.start, ev.end, ev.summary, ev.location, ev.start, "booked",
+            lesson["id"], ev.start, ev.end, ev.summary, ev.location, ev.start,
+            "booked" if ev.start > now else "closed",
             activity_id=(lesson.get("activity") or {}).get("id"), places=places,
             penalty_after=penalty_after, penalty_text=penalty_text,
         )
@@ -176,7 +179,8 @@ def _held(item: dict[str, Any]) -> Held:
 
 
 def _waiting(
-    item: dict[str, Any], zone_id: int, positions: dict[int, int], sessions: list[Session], **_: Any
+    item: dict[str, Any], zone_id: int, positions: dict[int, int], sessions: list[Session],
+    now: datetime, **_: Any
 ) -> Converted:
     lesson = item["booking"]
     if lesson["resource"]["idz"] != zone_id:
@@ -189,7 +193,8 @@ def _waiting(
     )
     sessions.append(
         Session(
-            lesson["id"], ev.start, ev.end, ev.summary, ev.location, ev.start, "waiting",
+            lesson["id"], ev.start, ev.end, ev.summary, ev.location, ev.start,
+            "waiting" if ev.start > now else "closed",
             activity_id=(lesson.get("activity") or {}).get("id"), wait_index=item["waitIndex"],
         )
     )
@@ -265,8 +270,9 @@ def build_data(
     waiting = upcoming.get("waitingBookings") or []
     if not all(isinstance(x, list) for x in (bookings, waiting, sessions or [])):
         raise ValueError("Unexpected Deciplus payload shape")
-    data.held = [_held(i) for i in (*bookings, *waiting) if i is not None]
-    data.waiting = sum(1 for i in waiting if i is not None)
+    # a registration stops counting at its class start (tested live), whatever the list says
+    data.held = [h for h in (_held(i) for i in (*bookings, *waiting) if i is not None) if h.start is None or h.start > now]
+    data.waiting = sum(1 for i in waiting if i is not None and _held(i) in data.held)
     ctx = {
         "zone_id": zone_id,
         "now": now,
@@ -570,9 +576,9 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
         pre-booking), no polling needed; the refresh also books what just opened."""
         self._cancel_opening_refresh()
         instants = [t for t in (next_opening(data, now), next_opens(self.prebookings, now)) if t]
-        if any(p.blocked for p in self.prebookings.values()):
-            # a registration stops counting when its class starts: retry right after
-            instants += [h.start for h in data.held if h.start and h.start > now]
+        # a registration stops counting when its class starts: the count, the picker and a
+        # blocked pre-booking all want a refresh right after
+        instants += [h.start for h in data.held if h.start and h.start > now]
         if instants:
             self._opening_unsub = async_track_point_in_time(
                 self.hass, self._refresh_at_opening, min(instants) + OPENING_REFRESH_DELAY

@@ -43,6 +43,12 @@ def test_build_data():
 
     # what the quota rules count: every booking and queue entry of the account, other zones included
     assert len(data.held) == 8 and data.waiting == 2
+    # a class that has started no longer counts, even while the list still has it
+    started = build_data(_load("upcoming.json"), [], [], 1, datetime(2026, 9, 21, 11, 15, tzinfo=PARIS))
+    assert len(started.held) == 7 and started.waiting == 2  # 1003 starts at 11:15: out; the queues are later
+    assert all(h.start is None or h.start > datetime(2026, 9, 21, 11, 15, tzinfo=PARIS) for h in started.held)
+    # and its row is over for the card (no Cancel on a class in progress), the others untouched
+    assert {s.id: s.state for s in started.sessions if s.id in (1003, 1011, 1005)} == {1003: "closed", 1011: "booked", 1005: "waiting"}
     assert {h.activity_name for h in data.held} == {"Body Pump", "Boxing", "Spinning", "Zumba", "Pilates", "Bootcamp"}
 
     assert [e.uid for e in data.waiting_list] == ["waiting-1005", "waiting-1006"]
