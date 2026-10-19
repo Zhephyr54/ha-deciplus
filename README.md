@@ -46,9 +46,11 @@ integration asks once, on the earliest session you are not registered on (the *p
 in the binary sensor attributes), which costs one request and changes nothing on your
 account. The state is therefore always current. The maxima are **learned**: the first time
 a limit is reached while Home Assistant is polling, the max is what you held at that moment
-(the server never lets you exceed it online). Until then the attribute is `null`; if the
-club later changes the limit, the value resets and is learned again. Learned values survive
-restarts.
+(the server never lets you exceed it online). Until then the attribute is `null`. Only a
+refusal ever sets a value, so a number you see is one you actually hit. If the club raises
+the limit, the value becomes `null` again until the next refusal; if a unit the server still
+counts (a cancelled class, until its start) had pulled the value below a limit you hit before,
+that earlier number comes back once the unit is gone. Learned values survive restarts.
 
 - `quota` — simultaneous registrations held. A waiting-list entry counts exactly like a
   booking, and each stops counting the moment its class starts. Exact.

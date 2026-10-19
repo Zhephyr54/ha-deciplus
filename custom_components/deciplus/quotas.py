@@ -3,8 +3,12 @@
 `GET sessions/{id}` returns `messages`: the rules that would refuse the calling member on
 that session, right now. The API never states the limits themselves, so the maxima are
 learned: a "reached" rule means the max is what the member holds at that moment (the server
-never lets a member exceed it online), and a rule *not* reached while holding as much as the
-learned value means the club raised it, so it becomes unknown again.
+never lets a member exceed it online). Only a refusal ever sets a value, so a displayed max
+is always one that was hit. A rule *not* reached while holding as much as the learned value
+contradicts it: either the club raised the limit (unknown again, relearned at the next
+refusal), or the server had counted a unit we do not (a cancelled class until its start, seen
+live) and pulled the value below the real one; the highest value ever hit is kept for that
+case and restored when it is still consistent with what the member holds.
 """
 
 from __future__ import annotations
@@ -63,12 +67,15 @@ def blockers(found: list[str]) -> list[str] | None:
     return [c for c in found if c not in SESSION_RULES]
 
 
-def _fit(known: int | None, reached: bool, count: int) -> int | None:
+def _fit(known: int | None, seen: int | None, reached: bool, count: int) -> tuple[int | None, int | None]:
+    """(learned value, highest value ever hit) after one observation."""
     if reached:
-        return count if count > 0 else known  # 0 held yet "reached": nothing to learn
-    if known is not None and count >= known:
-        return None  # not reached with that many: the club raised the limit
-    return known
+        if count == 0:  # 0 held yet "reached": nothing to learn
+            return known, seen
+        return count, max(seen or 0, count)
+    if known is not None and count >= known:  # contradicted
+        return (seen, seen) if seen and seen > count else (None, None)
+    return known, seen
 
 
 def learn(
@@ -89,19 +96,29 @@ def learn(
     on_day = sum(1 for h in held if h.start and dt_util.as_local(h.start).date() == day)
     same = [h for h in held if activity_id is not None and h.activity_id == activity_id]
 
+    seen = quotas.get("seen") or {}
+    simultaneous, seen_simultaneous = _fit(quotas.get("simultaneous"), seen.get("simultaneous"), QUOTA in found, len(held))
+    per_day, seen_per_day = _fit(quotas.get("per_day"), seen.get("per_day"), QUOTA_DAY in found, on_day)
     new = {
-        "simultaneous": _fit(quotas.get("simultaneous"), QUOTA in found, len(held)),
-        "per_day": _fit(quotas.get("per_day"), QUOTA_DAY in found, on_day),
+        "simultaneous": simultaneous,
+        "per_day": per_day,
         "per_activity": dict(quotas.get("per_activity") or {}),
+        # highest values ever hit, the fallback of a contradicted value (see _fit)
+        "seen": {
+            "simultaneous": seen_simultaneous,
+            "per_day": seen_per_day,
+            "per_activity": dict(seen.get("per_activity") or {}),
+        },
     }
     if activity_id is not None:
         # keyed by the activity name (what a user reads), from the bookings held for it
         name = next((h.activity_name for h in same if h.activity_name), str(activity_id))
-        value = _fit(new["per_activity"].get(name), QUOTA_ACTIVITY in found, len(same))
-        if value is None:
-            new["per_activity"].pop(name, None)
-        else:
-            new["per_activity"][name] = value
+        values = _fit(new["per_activity"].get(name), new["seen"]["per_activity"].get(name), QUOTA_ACTIVITY in found, len(same))
+        for table, value in zip((new["per_activity"], new["seen"]["per_activity"]), values):
+            if value is None:
+                table.pop(name, None)
+            else:
+                table[name] = value
     changed = new != quotas
     quotas.clear()
     quotas.update(new)

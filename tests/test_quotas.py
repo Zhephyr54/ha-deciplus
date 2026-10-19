@@ -47,8 +47,12 @@ def test_learn_simultaneous():
     # club lowered it: flagged at 4
     learn(q, held(4), D2, 9, codes([QUOTA]))
     assert q["simultaneous"] == 4
-    # club raised it: 4 held and not flagged → unknown again, then learned at 8
-    assert learn(q, held(4), D2, 9, codes([])) is True and q["simultaneous"] is None
+    # not flagged while holding 4: contradicted, and 6 (the highest ever hit) is consistent
+    # with holding 4 → back to 6 (a phantom unit, counted by the server only, had expired)
+    assert learn(q, held(4), D2, 9, codes([])) is True and q["simultaneous"] == 6
+    # club raised it: 6 held and not flagged, nothing higher was ever hit → unknown again
+    assert learn(q, held(6), D2, 9, codes([])) is True and q["simultaneous"] is None
+    assert q["seen"]["simultaneous"] is None
     learn(q, held(8), D2, 9, codes([QUOTA]))
     assert q["simultaneous"] == 8
     # flagged with nothing held (e.g. queue entries count): nothing to learn, no crash
@@ -68,9 +72,10 @@ def test_learn_day_and_activity():
     # probe on D2 (one booking, other activity): nothing contradicts
     learn(q, mine, D2, 7, codes([]))
     assert q["per_day"] == 2 and q["per_activity"] == {"Spinning": 2}
-    # a D1 probe not flagged any more: the club raised both
+    # a D1 probe not flagged any more: the club raised both (nothing higher ever hit)
     learn(q, mine, D1, 4, codes([]))
     assert q["per_day"] is None and q["per_activity"] == {}
+    assert q["seen"] == {"simultaneous": None, "per_day": None, "per_activity": {}}
     # an activity never booked is keyed by id, harmlessly
     learn(q, mine, D1, 99, codes([ACTIVITY]))
     assert q["per_activity"] == {}
