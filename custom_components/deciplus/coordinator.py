@@ -470,6 +470,7 @@ class DeciplusCoordinator(DataUpdateCoordinator[DeciplusData]):
                 "zone_id": self.zone_id,
                 "summary": p.summary,
                 "start": p.start.isoformat(),
+                "pending": len(self.prebookings),  # still queued after this one, blocked ones included
                 **result,
             },
         )

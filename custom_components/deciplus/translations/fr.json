@@ -66,7 +66,8 @@
       "prebookings": { "name": "Pré-réservations" }
     },
     "sensor": {
-      "held_bookings": { "name": "Réservations en cours" }
+      "held_bookings": { "name": "Réservations en cours" },
+      "pending_prebookings": { "name": "Pré-réservations en attente" }
     },
     "binary_sensor": {
       "booking_blocked": { "name": "Réservation bloquée" }

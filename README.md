@@ -31,12 +31,13 @@ the **[Xplor Deciplus card](https://github.com/Zhephyr54/ha-deciplus-card)** (se
 dashboard repository). It is fed by the integration's `deciplus/subscribe_planning` websocket
 subscription, pushed on every poll and after every action.
 
-Plus three entities:
+Plus four entities:
 
 | Entity                            | Content                                                                                                                                      |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `select.<club>_book_a_session`    | a picker listing every session of the horizon you are not registered on: choosing one books it, joins its waiting list (`– complet`) or pre-books it (`– ouvre le …`). Its state stays `unknown`: it is a button list, not a value |
 | `sensor.<club>_bookings_held`     | registrations you hold, bookings and waiting-list entries together, all sites of the account: the number the quota applies to. Attributes `bookings`, `waiting_list`, and the learned limits `quota`, `quota_per_day`, `quota_per_activity` |
+| `sensor.<club>_pre_bookings_pending` | pre-bookings still queued, blocked ones included; `0` when nothing is left to wait for. Attributes `blocked` (how many), `next_opens` (the next opening instant) and `sessions` (the queue: `session_id`, `summary`, `start`, `opens`, `blocked`…). Updates the moment the queue changes, whichever side changed it |
 | `binary_sensor.<club>_booking_blocked` | on when Deciplus would refuse you a booking right now for a reason about *you* (quota reached, unpaid, blacklisted, no valid product…); attribute `reasons` lists the Deciplus codes |
 
 ### How limits work
@@ -99,7 +100,12 @@ calendar; drop it with the calendar card's Delete button or `deciplus.cancel_boo
 - The outcome is one `deciplus_prebooking_result` event: `booked`, `waiting_list`, `failed`
   (with the Deciplus `code`), `expired` (the session started before it could be booked) or
   `already_registered` (you booked it by hand meanwhile). The pre-booking is removed in every
-  case, so the calendar only ever shows what is still to come.
+  case, so the calendar only ever shows what is still to come. The event also carries
+  `pending`, how many pre-bookings are still queued once this one is settled, so "booked, and
+  it was the last one" is one trigger with the condition `trigger.event.data.pending == 0`.
+  For a state-based trigger (`to: "0"`), a tile or the history, use
+  `sensor.<club>_pre_bookings_pending`, which also drops to `0` when you remove the last
+  pre-booking yourself.
 - **Quota at the opening.** The event description tells you in advance what you will hold at
   that instant (`À l'ouverture : 5/6 réservations prévues`), from your current registrations
   still upcoming then plus your other pre-bookings opening before; a warning is added when
@@ -171,7 +177,7 @@ consecutive polls, so nothing fires for changes that happened while Home Assista
 | `deciplus_booking_cancelled`       | a booking or queue spot disappeared before its start, not via HA | `kind`: `booking` \| `waiting_list` |
 | `deciplus_waiting_position_changed`| your position in a queue moved                                   | `position`, `previous_position`     |
 | `deciplus_session_available`       | a full session gained a free place                               |                                     |
-| `deciplus_prebooking_result`       | a pre-booking reached its outcome, or got `blocked` (not final: it is retried) | `result`: `booked` \| `waiting_list` \| `blocked` \| `failed` \| `expired` \| `already_registered`; `place_id` / `wait_index` / `code` + `message` as applicable |
+| `deciplus_prebooking_result`       | a pre-booking reached its outcome, or got `blocked` (not final: it is retried) | `result`: `booked` \| `waiting_list` \| `blocked` \| `failed` \| `expired` \| `already_registered`; `pending` (pre-bookings still queued after this one); `place_id` / `wait_index` / `code` + `message` as applicable |
 
 ## Recipes
 
